@@ -2,6 +2,7 @@ package com.therealcam.ui.camera
 
 import android.app.Application
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraManager
 import android.media.MediaActionSound
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,7 +17,12 @@ import com.therealcam.camera.CameraController
 import com.therealcam.camera.CameraMode
 import com.therealcam.camera.ExposureScale
 import com.therealcam.camera.FocusMode
+import com.therealcam.camera.Lens
+import com.therealcam.camera.LensKind
+import com.therealcam.camera.LensProbe
+import com.therealcam.camera.LensUse
 import com.therealcam.camera.ShotSettings
+import com.therealcam.camera.ZoomMath
 import com.therealcam.capture.ShotRunner
 import com.therealcam.data.AppSettings
 import com.therealcam.data.Profile
@@ -90,6 +96,18 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private val _meterEv = MutableStateFlow<Double?>(null)
     val meterEv = _meterEv.asStateFlow()
 
+    private var lensSpecs: LensProbe.Specs? = null
+    /** Lenses of the current side (back or front), sorted by zoom, macro last. */
+    private val _lenses = MutableStateFlow<List<Lens>>(emptyList())
+    val lenses = _lenses.asStateFlow()
+    /** Highlighted lens; its camera is the one that is (or will be) open. */
+    private val _lens = MutableStateFlow<Lens?>(null)
+    val lens = _lens.asStateFlow()
+    /** Field of view relative to the main lens of this side: 0.6×, 1×, 2.5×… */
+    private val _zoom = MutableStateFlow(1f)
+    val zoom = _zoom.asStateFlow()
+    private var pinchZoom: Float? = null
+
     /** Provided by the UI while the preview view exists (main thread only). */
     var sceneGrabber: (() -> ScenePreview?)? = null
 
@@ -106,6 +124,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             _mode.value = CameraMode.of(s.lastMode)
             _categoryHint.value = s.lastCategoryHint
             applyPreviewSettings()
+        }
+        viewModelScope.launch {
+            val manager = app.getSystemService(CameraManager::class.java)
+            lensSpecs = withContext(Dispatchers.IO) { runCatching { LensProbe.read(manager) }.getOrNull() }
+            refreshLenses()
         }
     }
 
@@ -146,16 +169,76 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val (back, frontId) = camera.cameraIds()
-                val id = (if (_front.value) frontId else back) ?: back ?: frontId ?: run {
+                val fallback = (if (_front.value) frontId else back) ?: back ?: frontId ?: run {
                     _message.value = "Камера не найдена"
                     return@launch
                 }
-                camera.open(id, t)
+                val l = _lens.value
+                camera.setZoomRatio(l?.ratioFor(_zoom.value) ?: 1f)
+                camera.open(l?.cameraId ?: fallback, t)
                 applyPreviewSettings()
             } catch (e: Exception) {
                 _message.value = "Не удалось открыть камеру: ${e.message}"
             }
         }
+    }
+
+    /** Rebuilds the lens list for the current side and falls back to its main lens if needed. */
+    private fun refreshLenses(reopen: Boolean = true) {
+        val list = lensSpecs?.lenses(_front.value).orEmpty()
+        _lenses.value = list
+        val cur = _lens.value
+        if (cur == null || cur !in list) {
+            val main = list.firstOrNull { it.kind == LensKind.MAIN || it.kind == LensKind.FRONT } ?: list.firstOrNull()
+            _lens.value = main
+            _zoom.value = main?.zoom ?: 1f
+            // The camera may already be open on the default id: only reopen if the main lens differs.
+            if (reopen && main != null && camera.caps.value != null && camera.caps.value?.id != main.cameraId) openIfReady()
+        }
+    }
+
+    /** Lens chip: switch lens (reopening the camera only when it is a different camera id). */
+    fun selectLens(l: Lens) {
+        if (_busy.value != null || _countdown.value != null) return
+        pinchZoom = null
+        val reopen = camera.caps.value?.id != l.cameraId
+        _lens.value = l
+        _zoom.value = l.zoom
+        camera.setZoomRatio(l.baseRatio)
+        if (reopen) openIfReady()
+    }
+
+    /** Pinch on the preview: zoom on the open camera, switching lens when the gesture ends. */
+    fun onPinch(scale: Float) {
+        if (_busy.value != null || _countdown.value != null) return
+        val list = _lenses.value
+        val cur = _lens.value ?: return
+        val camId = camera.caps.value?.id ?: return
+        val range = ZoomMath.range(list)
+        val target = ((pinchZoom ?: _zoom.value) * scale).coerceIn(range.start, range.endInclusive)
+        pinchZoom = target
+        val lens = if (cur.kind == LensKind.MACRO) cur else {
+            ZoomMath.lensFor(list, target)?.takeIf { it.cameraId == camId }
+                ?: ZoomMath.lensFor(list.filter { it.cameraId == camId }, target)
+                ?: cur
+        }
+        val shown = target.coerceIn(lens.minZoom, lens.maxZoom)
+        _lens.value = lens
+        _zoom.value = shown
+        camera.setZoomRatio(lens.ratioFor(shown))
+    }
+
+    fun onPinchEnd() {
+        val target = pinchZoom ?: return
+        pinchZoom = null
+        if (_lens.value?.kind == LensKind.MACRO) return
+        val best = ZoomMath.lensFor(_lenses.value, target) ?: return
+        if (best.cameraId == camera.caps.value?.id) return
+        // The requested view is better served by another camera id: switch to it now.
+        _lens.value = best
+        _zoom.value = target.coerceIn(best.minZoom, best.maxZoom)
+        camera.setZoomRatio(best.ratioFor(_zoom.value))
+        openIfReady()
     }
 
     override fun onCleared() {
@@ -175,8 +258,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun switchCamera() {
+        if (_busy.value != null) return
         _front.value = !_front.value
         _shot.value = ShotSettings(frames = _shot.value.frames, stackMode = _shot.value.stackMode)
+        pinchZoom = null
+        _lens.value = null
+        refreshLenses(reopen = false)
         openIfReady()
     }
 
@@ -294,7 +381,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             previewExposureNs = p?.exposureNs, previewIso = p?.iso, aperture = p?.aperture, lux = m.lux,
             pitchDeg = m.pitchDeg, rollDeg = m.rollDeg, gyroRms = m.gyroRms, timeMs = now,
             tzOffsetMs = TimeZone.getDefault().getOffset(now), lat = loc?.latitude, lon = loc?.longitude,
-            focusDiopters = p?.focusDiopters, zoom = p?.zoomRatio, front = camera.caps.value?.isFront == true,
+            focusDiopters = p?.focusDiopters, zoom = _zoom.value, front = camera.caps.value?.isFront == true,
         )
     }
 
@@ -384,7 +471,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun buildPlan(app: AppSettings): ShotRunner.Plan {
+    private fun buildPlan(app: AppSettings): ShotRunner.Plan = basePlan(app).copy(lens = lensUse())
+
+    private fun lensUse(): LensUse? {
+        val l = _lens.value ?: return null
+        val z = _zoom.value
+        // Every lens's field of view is expressed relative to the main lens, so this holds for all of them.
+        val mainEq = _lenses.value.firstOrNull { it.kind == LensKind.MAIN || it.kind == LensKind.FRONT }?.equivMm
+        return LensUse(l.kind, z, mainEq?.times(z))
+    }
+
+    private fun basePlan(app: AppSettings): ShotRunner.Plan {
         val hint = _categoryHint.value?.takeIf { id -> categories.value.any { it.id == id } }
         return when (_mode.value) {
             CameraMode.AUTO -> ShotRunner.Plan(

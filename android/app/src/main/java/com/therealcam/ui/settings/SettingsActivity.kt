@@ -97,6 +97,7 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
     val pendingCount by vm.pendingCount.collectAsState()
     val status by vm.status.collectAsState()
     val busy by vm.busy.collectAsState()
+    val lenses by vm.lenses.collectAsState()
     var consent by remember { mutableStateOf(false) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::importModel) }
@@ -190,6 +191,16 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
             SwitchRow("Уровень горизонта", null, s.level, vm::setLevel)
             SwitchRow("Спуск кнопками громкости", null, s.volumeShutter, vm::setVolumeShutter)
             ChoiceRow("Качество JPEG", listOf(90 to "90", 95 to "95", 100 to "100"), s.jpegQuality, vm::setJpegQuality)
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("Объективы этого телефона", color = Color.White)
+                if (lenses.isEmpty()) Text("Определяю…", color = RealColors.TextDim, fontSize = 12.sp)
+                lenses.forEach { Text("• $it", color = RealColors.TextDim, fontSize = 12.sp) }
+                Text(
+                    "Переключаются кнопками над спуском и жестом двумя пальцами. Если объектива нет в списке, " +
+                        "производитель не открыл его сторонним приложениям.",
+                    color = RealColors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             Section("О приложении")
             Text(

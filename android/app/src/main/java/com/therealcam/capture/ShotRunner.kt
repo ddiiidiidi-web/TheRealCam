@@ -12,6 +12,7 @@ import com.therealcam.camera.CameraCaps
 import com.therealcam.camera.CameraController
 import com.therealcam.camera.CameraMode
 import com.therealcam.camera.CapturedFrame
+import com.therealcam.camera.LensUse
 import com.therealcam.camera.PreviewSnapshot
 import com.therealcam.camera.ShotSettings
 import com.therealcam.camera.StillRequest
@@ -52,6 +53,7 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val categoryId: String?,
         val ai: AiInfo?,
         val timerS: Int,
+        val lens: LensUse? = null,
     )
 
     data class Env(
@@ -242,7 +244,7 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
                 mode = plan.mode.key,
                 photo = PhotoInfo(photoRole, width, height, orientation, env.app.jpegQuality, fileName),
                 capture = MetaBuilder.capture(frame.meta),
-                userSettings = MetaBuilder.userSettings(plan.settings, plan.timerS, plan.categoryId),
+                userSettings = MetaBuilder.userSettings(plan.settings, plan.timerS, plan.categoryId, plan.lens),
                 series = series,
                 location = MetaBuilder.location(location),
                 orientation = MetaBuilder.orientation(env.motion),

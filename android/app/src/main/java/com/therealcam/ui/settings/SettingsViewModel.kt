@@ -1,19 +1,23 @@
 package com.therealcam.ui.settings
 
 import android.app.Application
+import android.hardware.camera2.CameraManager
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.therealcam.ai.ModelFileInfo
 import com.therealcam.appGraph
+import com.therealcam.camera.LensProbe
 import com.therealcam.data.AppSettings
 import com.therealcam.data.db.CategoryEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
@@ -30,9 +34,21 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val status = _status.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _lenses = MutableStateFlow<List<String>>(emptyList())
+    /** Detected lenses of both sides, e.g. "0.6× Ультраширик · 13 мм · 12 МП". */
+    val lenses = _lenses.asStateFlow()
 
     init {
         viewModelScope.launch { g.models.refresh() }
+        viewModelScope.launch {
+            val manager = app.getSystemService(CameraManager::class.java)
+            _lenses.value = withContext(Dispatchers.IO) {
+                runCatching {
+                    val specs = LensProbe.read(manager)
+                    specs.lenses(front = false).map { it.description } + specs.lenses(front = true).map { it.description }
+                }.getOrElse { listOf("Не удалось прочитать камеры: ${it.message}") }
+            }
+        }
     }
 
     fun clearStatus() {

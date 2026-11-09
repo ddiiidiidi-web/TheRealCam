@@ -96,6 +96,9 @@ fun CameraScreen(
     val model by vm.model.collectAsState()
     val ai by vm.ai.collectAsState()
     val torch by vm.torch.collectAsState()
+    val lenses by vm.lenses.collectAsState()
+    val lens by vm.lens.collectAsState()
+    val zoom by vm.zoom.collectAsState()
     val rot = rotationFor(motion.deviceOrientation)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -138,7 +141,13 @@ fun CameraScreen(
                 PreviewView(vm, Modifier.fillMaxSize())
                 if (settings.grid) GridOverlay()
                 if (settings.level) LevelOverlay(motion.rollDeg, motion.pitchDeg, motion.deviceOrientation)
-                FocusTapLayer(enabled = busy == null) { u, v -> vm.focusAt(u, v) }
+                FocusTapLayer(enabled = busy == null, onTap = { u, v -> vm.focusAt(u, v) }, onPinch = vm::onPinch, onPinchEnd = vm::onPinchEnd)
+                if (busy == null && countdown == null) {
+                    ZoomBar(
+                        lenses, lens, zoom, rot, onLens = vm::selectLens,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+                    )
+                }
 
                 val needTripod = when (mode) {
                     CameraMode.AI -> ai?.plan?.needsTripod == true
@@ -304,7 +313,7 @@ private fun LevelOverlay(rollDeg: Double, pitchDeg: Double, orientation: Int) {
 }
 
 @Composable
-private fun FocusTapLayer(enabled: Boolean, onTap: (Float, Float) -> Unit) {
+private fun FocusTapLayer(enabled: Boolean, onTap: (Float, Float) -> Unit, onPinch: (Float) -> Unit, onPinchEnd: () -> Unit) {
     var tap by remember { mutableStateOf<Offset?>(null) }
     LaunchedEffect(tap) {
         if (tap != null) {
@@ -314,12 +323,15 @@ private fun FocusTapLayer(enabled: Boolean, onTap: (Float, Float) -> Unit) {
     }
     val density = LocalDensity.current
     BoxWithConstraints(
-        Modifier.fillMaxSize().pointerInput(enabled) {
-            if (enabled) detectTapGestures { o ->
+        Modifier.fillMaxSize().previewGestures(
+            enabled,
+            onTap = { o, size ->
                 tap = o
                 onTap(o.x / size.width, o.y / size.height)
-            }
-        },
+            },
+            onPinch = onPinch,
+            onPinchEnd = onPinchEnd,
+        ),
     ) {
         tap?.let { o ->
             val r = with(density) { 32.dp.toPx() }
