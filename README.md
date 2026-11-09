@@ -66,7 +66,10 @@ cd android
    Кадры серии можно открыть и оценить по отдельности.
 5. **Выгрузить датасет:** Настройки → «Экспорт ZIP» (минимум 150 оценённых снимков, лучше 2000+).
    Можно и скопировать папку `Android/data/com.therealcam/files/TheRealCam/dataset` по USB.
-6. **Обучить модель на ПК:** см. [`trainer/README.md`](trainer/README.md). Если коротко:
+6. **Обучить модель на ПК:** см. [`trainer/README.md`](trainer/README.md). Готовый тренер без установки Python
+   собирается в GitHub Actions (workflow `trainer-bin`): артефакты **TheRealCamTrainer-Windows** и
+   **TheRealCamTrainer-Linux** — папка с `therealcam-trainer-gui` (окно) и `therealcam-trainer` (командная строка).
+   Из исходников:
    ```bash
    python -m therealcam_trainer inspect-dataset dataset.zip
    python -m therealcam_trainer train dataset.zip -o my-model.trcm
