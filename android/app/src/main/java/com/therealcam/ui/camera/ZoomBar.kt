@@ -45,7 +45,10 @@ import com.therealcam.camera.ZoomMath
 import com.therealcam.ui.theme.RealColors
 import kotlinx.coroutines.delay
 
-/** Lens chips over the bottom of the preview: "0.6  1×  3  ✿". The selected chip shows the current zoom. */
+/**
+ * Lens chips over the bottom of the preview: "0.6  1×  2  ✿". Lenses switch the camera module, a plain
+ * number is digital zoom on the main lens. The selected chip shows the current zoom.
+ */
 @Composable
 fun ZoomBar(
     lenses: List<Lens>,
@@ -54,8 +57,17 @@ fun ZoomBar(
     rot: Float,
     onLens: (Lens) -> Unit,
     modifier: Modifier = Modifier,
+    onZoom: (Float) -> Unit = {},
 ) {
     if (lenses.isEmpty()) return
+    val stops = remember(lenses) {
+        val optical = lenses.filter { it.kind != LensKind.MACRO }.map { Stop(it.zoom, it) }
+        val digital = ZoomMath.digitalStops(lenses).map { Stop(it, null) }
+        (optical + digital).sortedBy { it.zoom } + lenses.filter { it.kind == LensKind.MACRO }.map { Stop(it.zoom, it) }
+    }
+    val current = if (selected?.kind == LensKind.MACRO) stops.firstOrNull { it.lens == selected }
+    else stops.filter { it.lens?.kind != LensKind.MACRO && it.zoom <= zoom * 1.001f }.maxByOrNull { it.zoom }
+        ?: stops.firstOrNull { it.lens?.kind != LensKind.MACRO }
     var caption by remember { mutableStateOf<String?>(null) }
     var first by remember { mutableStateOf(true) }
     // Name the lens for a moment after it changes, so chips need no permanent text.
@@ -82,23 +94,24 @@ fun ZoomBar(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            lenses.forEach { l ->
-                val sel = l == selected
+            stops.forEach { st ->
+                val l = st.lens
+                val sel = st == current
                 Box(
                     Modifier.size(38.dp).clip(CircleShape)
                         .background(if (sel) RealColors.Scrim else Color.Transparent)
-                        .clickable { onLens(l) }
-                        .semantics { contentDescription = l.description },
+                        .clickable { if (l != null) onLens(l) else onZoom(st.zoom) }
+                        .semantics { contentDescription = l?.description ?: "Цифровой зум ${ZoomMath.display(st.zoom)}" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (l.kind == LensKind.MACRO) {
+                    if (l?.kind == LensKind.MACRO) {
                         Icon(
                             Icons.Filled.LocalFlorist, null, tint = if (sel) RealColors.Accent else Color.White,
                             modifier = Modifier.size(18.dp).rotate(rot),
                         )
                     } else {
                         Text(
-                            if (sel) ZoomMath.display(zoom) else l.label,
+                            if (sel) ZoomMath.display(zoom) else l?.label ?: ZoomMath.label(st.zoom),
                             color = if (sel) RealColors.Accent else Color.White,
                             fontSize = if (sel) 13.sp else 12.sp,
                             fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
@@ -110,6 +123,8 @@ fun ZoomBar(
         }
     }
 }
+
+private data class Stop(val zoom: Float, val lens: Lens?)
 
 /** One-finger tap (focus) and two-finger pinch (zoom) on the preview; [onPinchEnd] fires when all fingers lift. */
 fun Modifier.previewGestures(

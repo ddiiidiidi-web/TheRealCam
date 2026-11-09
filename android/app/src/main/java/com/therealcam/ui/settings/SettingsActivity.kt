@@ -199,8 +199,9 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
                 if (lenses.isEmpty()) Text("Определяю…", color = RealColors.TextDim, fontSize = 12.sp)
                 lenses.forEach { Text("• $it", color = RealColors.TextDim, fontSize = 12.sp) }
                 Text(
-                    "Переключаются кнопками над спуском и жестом двумя пальцами. Если объектива нет в списке, " +
-                        "производитель не открыл его сторонним приложениям.",
+                    "Переключаются кнопками над спуском и жестом двумя пальцами. Многие Xiaomi/Redmi/POCO показывают " +
+                        "сторонним приложениям только основную камеру; остальные модули приложение ищет само. Если модуль " +
+                        "не открывается, он пропадёт из кнопок после первой попытки.",
                     color = RealColors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp),
                 )
             }

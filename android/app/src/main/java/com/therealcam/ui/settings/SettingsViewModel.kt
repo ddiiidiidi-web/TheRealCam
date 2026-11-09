@@ -45,7 +45,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             _lenses.value = withContext(Dispatchers.IO) {
                 runCatching {
                     val specs = LensProbe.read(manager)
-                    specs.lenses(front = false).map { it.description } + specs.lenses(front = true).map { it.description }
+                    val all = specs.lenses(front = false) + specs.lenses(front = true)
+                    all.map { l -> l.description + if (l.hidden) " · скрытый модуль, id ${l.cameraId}" else "" } +
+                        "Камер в списке системы: ${specs.listed.size}, найдено скрытых модулей: ${specs.hidden.size}"
                 }.getOrElse { listOf("Не удалось прочитать камеры: ${it.message}") }
             }
         }

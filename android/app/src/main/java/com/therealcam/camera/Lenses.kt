@@ -35,6 +35,8 @@ data class LensSpec(
     val zoomRatioRange: ClosedFloatingPointRange<Float>?,
     val maxDigitalZoom: Float,
     val fixedFocus: Boolean,
+    /** Not in getCameraIdList(): some vendors list only one back and one front camera to third-party apps. */
+    val hidden: Boolean = false,
 ) {
     val megapixels: Float get() = activeWidthPx.toFloat() * activeHeightPx / 1e6f
     val diagonalMm: Float get() = hypot(activeWidthMm, activeHeightMm)
@@ -63,6 +65,7 @@ data class Lens(
     val maxRatio: Float,
     val equivMm: Float?,
     val megapixels: Float,
+    val hidden: Boolean = false,
 ) {
     val label: String get() = if (kind == LensKind.MACRO) "M" else ZoomMath.label(zoom)
     val minZoom: Float get() = minRatio * zoomPerRatio
@@ -134,7 +137,7 @@ object LensCatalog {
             else out.any { it.kind != LensKind.MACRO && sameFov((it.equivMm ?: (it.zoom * mainEq)) / mainEq, z) }
             if (duplicate) continue
             val maxR = max(1f, c.zoomRatioRange?.endInclusive ?: c.maxDigitalZoom)
-            out += Lens(c.id, kind, z, 1f, z, 1f, maxR, eq, c.megapixels)
+            out += Lens(c.id, kind, z, 1f, z, 1f, maxR, eq, c.megapixels, c.hidden)
         }
         return out.sortedWith(compareBy<Lens>({ it.kind == LensKind.MACRO }, { it.zoom }))
     }
@@ -191,6 +194,13 @@ object ZoomMath {
     fun lensFor(lenses: List<Lens>, zoom: Float): Lens? {
         val optical = lenses.filter { it.kind != LensKind.MACRO }
         return optical.filter { it.zoom <= zoom * 1.001f }.maxByOrNull { it.zoom } ?: optical.minByOrNull { it.zoom }
+    }
+
+    /** Digital zoom steps offered as buttons next to the lenses: 2× when there is no telephoto lens. */
+    fun digitalStops(lenses: List<Lens>): List<Float> {
+        val optical = lenses.filter { it.kind != LensKind.MACRO }
+        if (optical.isEmpty() || optical.any { it.zoom >= 1.8f }) return emptyList()
+        return if (range(lenses).endInclusive >= 2f) listOf(2f) else emptyList()
     }
 
     /** Zoom reachable with [lenses] (optical lenses plus their digital zoom). */

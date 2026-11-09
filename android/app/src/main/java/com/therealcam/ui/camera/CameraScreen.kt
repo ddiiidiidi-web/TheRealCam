@@ -148,6 +148,7 @@ fun CameraScreen(
                     ZoomBar(
                         lenses, lens, zoom, rot, onLens = vm::selectLens,
                         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+                        onZoom = vm::setZoom,
                     )
                 }
 

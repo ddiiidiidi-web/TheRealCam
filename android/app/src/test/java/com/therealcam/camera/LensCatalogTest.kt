@@ -113,6 +113,22 @@ class LensCatalogTest {
         assertTrue(lenses.all { it.cameraId == "0" })
     }
 
+    // Redmi 9T-like: only the main and front cameras are listed; ultra-wide, macro and depth answer by id.
+    @Test
+    fun hiddenXiaomiModulesBecomeLenses() {
+        val main = spec("0", 4.71f, 6.4f, 4.8f, 8000, 6000, maxDigital = 10f)
+        val uw = spec("2", 1.6f, 3.6f, 2.7f, 3264, 2448, fixedFocus = true).copy(hidden = true)
+        val depth = spec("3", 1.8f, 2.24f, 1.68f, 1600, 1200, fixedFocus = true, usable = false).copy(hidden = true)
+        val macro = spec("4", 1.8f, 2.24f, 1.68f, 1600, 1200, fixedFocus = true).copy(hidden = true)
+        val lenses = LensCatalog.build(listOf(main, front, uw, depth, macro), emptyMap(), front = false)
+        assertEquals(listOf("0.6", "1", "M"), lenses.map { it.label })
+        assertEquals(listOf("2", "0", "4"), lenses.map { it.cameraId })
+        assertEquals(listOf(true, false, true), lenses.map { it.hidden })
+        // No telephoto: a digital 2× button is offered next to the lenses.
+        assertEquals(listOf(2f), ZoomMath.digitalStops(lenses))
+        assertTrue(ZoomMath.digitalStops(LensCatalog.build(listOf(samMain, samUw, samTele), emptyMap(), front = false)).isEmpty())
+    }
+
     @Test
     fun singleOldCameraHasOnlyDigitalZoom() {
         val main = spec("0", 3.9f, 4.6f, 3.5f, 4160, 3120, maxDigital = 4f)

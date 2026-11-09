@@ -193,14 +193,27 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 camera.open(l?.cameraId ?: fallback, t)
                 applyPreviewSettings()
             } catch (e: Exception) {
-                _message.value = "Не удалось открыть камеру: ${e.message}"
+                val l = _lens.value
+                if (l != null && l.kind != LensKind.MAIN && l.kind != LensKind.FRONT && l.cameraId !in blockedIds) {
+                    // The vendor lists the module but does not let third-party apps open it: back to the main lens.
+                    blockedIds += l.cameraId
+                    _lens.value = null
+                    refreshLenses(reopen = false)
+                    _message.value = "${l.kind.title}: производитель не даёт открыть этот объектив сторонним приложениям"
+                    openIfReady()
+                } else {
+                    _message.value = "Не удалось открыть камеру: ${e.message}"
+                }
             }
         }
     }
 
+    /** Camera ids that failed to open; their lenses are no longer offered. */
+    private val blockedIds = mutableSetOf<String>()
+
     /** Rebuilds the lens list for the current side and falls back to its main lens if needed. */
     private fun refreshLenses(reopen: Boolean = true) {
-        val list = lensSpecs?.lenses(_front.value).orEmpty()
+        val list = lensSpecs?.lenses(_front.value).orEmpty().filter { it.cameraId !in blockedIds }
         _lenses.value = list
         val cur = _lens.value
         if (cur == null || cur !in list) {
@@ -220,6 +233,21 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _lens.value = l
         _zoom.value = l.zoom
         camera.setZoomRatio(l.baseRatio, applyNow = !reopen)
+        if (reopen) openIfReady()
+    }
+
+    /** Digital zoom button ("2"): the best lens for [target], reopening only for another camera id. */
+    fun setZoom(target: Float) {
+        if (_busy.value != null || _countdown.value != null) return
+        pinchZoom = null
+        val list = _lenses.value
+        val range = ZoomMath.range(list)
+        val t = target.coerceIn(range.start, range.endInclusive)
+        val best = ZoomMath.lensFor(list, t) ?: return
+        val reopen = camera.caps.value?.id != best.cameraId
+        _lens.value = best
+        _zoom.value = t.coerceIn(best.minZoom, best.maxZoom)
+        camera.setZoomRatio(best.ratioFor(_zoom.value), applyNow = !reopen)
         if (reopen) openIfReady()
     }
 
