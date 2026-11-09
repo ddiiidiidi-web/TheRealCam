@@ -138,12 +138,16 @@ class CameraController(context: Context) {
         runCatching { startPreviewLocked(c) }.onFailure { Log.w(TAG, "preview update failed", it) }
     }
 
-    /** Zoom ratio for the preview and the following stills; also used by the next [open]. */
-    fun setZoomRatio(r: Float) {
+    /**
+     * Zoom ratio for the preview and the following stills; also used by the next [open].
+     * [applyNow] = false only stores it, for a camera that is about to be reopened.
+     */
+    fun setZoomRatio(r: Float, applyNow: Boolean = true) {
         if (abs(r - zoomRatio) < 1e-3f) return
         zoomRatio = r
         // A tap region refers to the old field of view; go back to continuous focus.
         region = null
+        if (!applyNow) return
         val c = _caps.value ?: return
         runCatching { startPreviewLocked(c) }.onFailure { Log.w(TAG, "zoom update failed", it) }
     }

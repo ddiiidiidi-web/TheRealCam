@@ -174,7 +174,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 val l = _lens.value
-                camera.setZoomRatio(l?.ratioFor(_zoom.value) ?: 1f)
+                camera.setZoomRatio(l?.ratioFor(_zoom.value) ?: 1f, applyNow = false)
                 camera.open(l?.cameraId ?: fallback, t)
                 applyPreviewSettings()
             } catch (e: Exception) {
@@ -204,7 +204,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         val reopen = camera.caps.value?.id != l.cameraId
         _lens.value = l
         _zoom.value = l.zoom
-        camera.setZoomRatio(l.baseRatio)
+        camera.setZoomRatio(l.baseRatio, applyNow = !reopen)
         if (reopen) openIfReady()
     }
 
@@ -237,7 +237,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         // The requested view is better served by another camera id: switch to it now.
         _lens.value = best
         _zoom.value = target.coerceIn(best.minZoom, best.maxZoom)
-        camera.setZoomRatio(best.ratioFor(_zoom.value))
+        camera.setZoomRatio(best.ratioFor(_zoom.value), applyNow = false)
         openIfReady()
     }
 
