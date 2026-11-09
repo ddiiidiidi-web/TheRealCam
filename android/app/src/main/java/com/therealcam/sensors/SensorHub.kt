@@ -98,6 +98,7 @@ class SensorHub(context: Context) : SensorEventListener {
     private var pressureHpa: Double? = null
     private var deviceOrientation = 0
     private var lastPublishNs = 0L
+    private val steadyFilter = SteadyFilter()
 
     /** Offset to convert sensor timestamps to elapsedRealtimeNanos (0 on most devices). */
     private var tsOffset: Long? = null
@@ -200,7 +201,7 @@ class SensorHub(context: Context) : SensorEventListener {
             azimuthDeg = azimuth,
             deviceOrientation = deviceOrientation,
             gyroRms = rms,
-            steady = rms.isFinite() && rms < STEADY_RAD_S,
+            steady = steadyFilter.update(rms, SystemClock.elapsedRealtimeNanos()),
             lux = lux,
             pressureHpa = pressureHpa,
             hasGyro = gyro != null,
