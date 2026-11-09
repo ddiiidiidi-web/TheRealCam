@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,6 +41,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -96,7 +98,9 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
     val status by vm.status.collectAsState()
     val busy by vm.busy.collectAsState()
     val lenses by vm.lenses.collectAsState()
+    val rootLog by vm.rootLog.collectAsState()
     var consent by remember { mutableStateOf(false) }
+    var rootConfirm by remember { mutableStateOf(false) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::importModel) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> uri?.let(vm::exportDataset) }
@@ -206,6 +210,31 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
                 )
             }
 
+            Section("Про-режим")
+            SwitchRow("Про-режим", "Дополнительные настройки обработки кадра и доступ к камерам через root", s.proMode, vm::setProMode)
+            if (s.proMode) {
+                val modes = listOf(-1 to "Авто", 0 to "Выкл", 1 to "Быстро", 2 to "Макс")
+                ChoiceRow("Шумоподавление", modes, s.noiseReduction, vm::setNoiseReduction)
+                Text(
+                    "Для серий лучше «Выкл»: шум и так уходит при сведении, а детали остаются.",
+                    color = RealColors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                ChoiceRow("Резкость", modes, s.edgeMode, vm::setEdgeMode)
+                ChoiceRow("Оптический стабилизатор", listOf(-1 to "Авто", 0 to "Выкл", 1 to "Вкл"), s.oisMode, vm::setOisMode)
+                Text(
+                    "На штативе стабилизатор лучше выключить: при длинной выдержке он может «плыть».",
+                    color = RealColors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                SwitchRow(
+                    "Root-доступ к камерам",
+                    "Нужен Magisk или KernelSU. Приложение добавит себя в список программ, которым прошивка " +
+                        "открывает все модули камеры (ультраширик, макро). Действует до перезагрузки, " +
+                        "при запуске приложение повторяет это само.",
+                    s.rootCamera,
+                ) { on -> if (on) rootConfirm = true else vm.setRootCamera(false) }
+                rootLog?.let { Text(it, color = RealColors.TextDim, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 16.dp)) }
+            }
+
             Section("О приложении")
             Text(
                 "TheRealCam ${BuildConfig.VERSION_NAME}\nИИ выбирает только параметры съёмки и отбирает кадры. " +
@@ -217,6 +246,23 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
 
     if (consent) {
         DatasetConsentDialog(onAccept = { consent = false; vm.setDatasetMode(true) }, onDismiss = { consent = false })
+    }
+    if (rootConfirm) {
+        AlertDialog(
+            onDismissRequest = { rootConfirm = false },
+            title = { Text("Root-доступ к камерам") },
+            text = {
+                Text(
+                    "Приложение запросит su и выполнит только одно: добавит com.therealcam в системные списки " +
+                        "vendor.camera.aux.packagelist (и privapp.list, если они есть). Другие приложения и файлы " +
+                        "не затрагиваются, изменение пропадает после перезагрузки. Выключение переключателя убирает " +
+                        "приложение из списков.",
+                    fontSize = 13.sp,
+                )
+            },
+            confirmButton = { TextButton(onClick = { rootConfirm = false; vm.setRootCamera(true) }) { Text("Разрешить") } },
+            dismissButton = { TextButton(onClick = { rootConfirm = false }) { Text("Отмена") } },
+        )
     }
 }
 

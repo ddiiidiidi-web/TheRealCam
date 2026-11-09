@@ -31,6 +31,7 @@ import com.therealcam.capture.ScenePreset
 import com.therealcam.capture.ShotRunner
 import com.therealcam.capture.SpeechText
 import com.therealcam.capture.VoiceAnnouncer
+import com.therealcam.core.RootCamera
 import com.therealcam.data.AppSettings
 import com.therealcam.data.Profile
 import com.therealcam.data.SceneKeys
@@ -150,8 +151,19 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val manager = app.getSystemService(CameraManager::class.java)
-            lensSpecs = withContext(Dispatchers.IO) { runCatching { LensProbe.read(manager) }.getOrNull() }
+            val s = g.settings.current()
+            lensSpecs = withContext(Dispatchers.IO) {
+                // With root, unlock the vendor-hidden modules before the camera list is read.
+                if (s.proMode && s.rootCamera) runCatching { RootCamera.enable(app.packageName) }
+                runCatching { LensProbe.read(manager) }.getOrNull()
+            }
             refreshLenses()
+        }
+        viewModelScope.launch {
+            settings.collect { s ->
+                camera.pro = if (s.proMode) CameraController.ProOptions(s.noiseReduction, s.edgeMode, s.oisMode)
+                else CameraController.ProOptions()
+            }
         }
     }
 
@@ -169,6 +181,14 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (settings.value.geotag) g.location.start()
         openIfReady()
         startAnalysis()
+        // Root may have been switched on in settings meanwhile: modules can appear or disappear.
+        if (lensSpecs != null) viewModelScope.launch {
+            val manager = getApplication<Application>().getSystemService(CameraManager::class.java)
+            withContext(Dispatchers.IO) { runCatching { LensProbe.read(manager) }.getOrNull() }?.let {
+                lensSpecs = it
+                if (_busy.value == null) refreshLenses()
+            }
+        }
     }
 
     fun onPause() {

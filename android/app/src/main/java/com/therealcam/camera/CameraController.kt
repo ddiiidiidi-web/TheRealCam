@@ -59,6 +59,11 @@ class CameraController(context: Context) {
     /** CONTROL_ZOOM_RATIO on API 30+ cameras that support it, otherwise a centred crop factor. */
     @Volatile private var zoomRatio = 1f
 
+    /** Pro-mode overrides of the camera's processing; -1 keeps the camera default. */
+    data class ProOptions(val noiseReduction: Int = -1, val edge: Int = -1, val ois: Int = -1)
+
+    @Volatile var pro = ProOptions()
+
     private val _caps = MutableStateFlow<CameraCaps?>(null)
     /** Non-null while a session is running. */
     val caps: StateFlow<CameraCaps?> = _caps.asStateFlow()
@@ -313,6 +318,12 @@ class CameraController(context: Context) {
         val awb = if (s.wb.awbMode in c.awbModes) s.wb.awbMode else CameraMetadata.CONTROL_AWB_MODE_AUTO
         b.set(CaptureRequest.CONTROL_AWB_MODE, awb)
         applyZoom(b, c)
+        val p = pro
+        if (!preview) {
+            if (p.noiseReduction >= 0 && p.noiseReduction in c.noiseReductionModes) b.set(CaptureRequest.NOISE_REDUCTION_MODE, p.noiseReduction)
+            if (p.edge >= 0 && p.edge in c.edgeModes) b.set(CaptureRequest.EDGE_MODE, p.edge)
+        }
+        if (p.ois >= 0 && p.ois in c.oisModes) b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, p.ois)
     }
 
     private fun applyZoom(b: CaptureRequest.Builder, c: CameraCaps) {

@@ -39,6 +39,16 @@ data class AppSettings(
     val voice: Boolean = true,
     /** Last scene of the СЦЕНЫ mode (ScenePreset key). */
     val lastPreset: String = "night",
+    /** Pro mode: shows the options below in settings and applies them. */
+    val proMode: Boolean = false,
+    /** Root: add the app to the vendor list of packages that see all camera modules. */
+    val rootCamera: Boolean = false,
+    /** Camera2 NOISE_REDUCTION_MODE for stills, -1 = camera default. */
+    val noiseReduction: Int = -1,
+    /** Camera2 EDGE_MODE (sharpening) for stills, -1 = camera default. */
+    val edgeMode: Int = -1,
+    /** Camera2 LENS_OPTICAL_STABILIZATION_MODE, -1 = camera default. */
+    val oisMode: Int = -1,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -61,6 +71,11 @@ class SettingsRepository(private val context: Context) {
         val astroDurationS = intPreferencesKey("astro_duration_s")
         val voice = booleanPreferencesKey("voice")
         val lastPreset = stringPreferencesKey("last_preset")
+        val proMode = booleanPreferencesKey("pro_mode")
+        val rootCamera = booleanPreferencesKey("root_camera")
+        val noiseReduction = intPreferencesKey("noise_reduction")
+        val edgeMode = intPreferencesKey("edge_mode")
+        val oisMode = intPreferencesKey("ois_mode")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }
@@ -88,6 +103,11 @@ class SettingsRepository(private val context: Context) {
             astroDurationS = this[K.astroDurationS] ?: d.astroDurationS,
             voice = this[K.voice] ?: d.voice,
             lastPreset = this[K.lastPreset] ?: d.lastPreset,
+            proMode = this[K.proMode] ?: d.proMode,
+            rootCamera = this[K.rootCamera] ?: d.rootCamera,
+            noiseReduction = this[K.noiseReduction] ?: d.noiseReduction,
+            edgeMode = this[K.edgeMode] ?: d.edgeMode,
+            oisMode = this[K.oisMode] ?: d.oisMode,
         )
     }
 
@@ -110,6 +130,11 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAstroDurationS(v: Int) = context.dataStore.edit { it[K.astroDurationS] = v.coerceIn(10, 3600) }
     suspend fun setVoice(v: Boolean) = context.dataStore.edit { it[K.voice] = v }
     suspend fun setLastPreset(v: String) = context.dataStore.edit { it[K.lastPreset] = v }
+    suspend fun setProMode(v: Boolean) = context.dataStore.edit { it[K.proMode] = v }
+    suspend fun setRootCamera(v: Boolean) = context.dataStore.edit { it[K.rootCamera] = v }
+    suspend fun setNoiseReduction(v: Int) = context.dataStore.edit { it[K.noiseReduction] = v }
+    suspend fun setEdgeMode(v: Int) = context.dataStore.edit { it[K.edgeMode] = v }
+    suspend fun setOisMode(v: Int) = context.dataStore.edit { it[K.oisMode] = v }
 
     suspend fun setActiveModel(fileName: String?) = context.dataStore.edit {
         if (fileName == null) it.remove(K.activeModel) else it[K.activeModel] = fileName

@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.therealcam.ai.ModelFileInfo
 import com.therealcam.appGraph
 import com.therealcam.camera.LensProbe
+import com.therealcam.core.RootCamera
 import com.therealcam.data.AppSettings
 import com.therealcam.data.db.CategoryEntity
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +66,32 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setLevel(on: Boolean) = viewModelScope.launch { g.settings.setLevel(on) }
     fun setVolumeShutter(on: Boolean) = viewModelScope.launch { g.settings.setVolumeShutter(on) }
     fun setVoice(on: Boolean) = viewModelScope.launch { g.settings.setVoice(on) }
+    fun setProMode(on: Boolean) = viewModelScope.launch { g.settings.setProMode(on) }
+    fun setNoiseReduction(v: Int) = viewModelScope.launch { g.settings.setNoiseReduction(v) }
+    fun setEdgeMode(v: Int) = viewModelScope.launch { g.settings.setEdgeMode(v) }
+    fun setOisMode(v: Int) = viewModelScope.launch { g.settings.setOisMode(v) }
+
+    private val _rootLog = MutableStateFlow<String?>(null)
+    /** Output of the last root script, shown under the switch. */
+    val rootLog = _rootLog.asStateFlow()
+
+    /** Root switch: the setting is kept on only when su was granted and the vendor list now contains the app. */
+    fun setRootCamera(on: Boolean) = viewModelScope.launch {
+        _busy.value = true
+        val pkg = getApplication<Application>().packageName
+        val r = withContext(Dispatchers.IO) { if (on) RootCamera.enable(pkg) else RootCamera.disable(pkg) }
+        if (on) {
+            val ok = RootCamera.applied(r, pkg)
+            g.settings.setRootCamera(ok)
+            _status.value = if (ok) "Root: все модули камеры открыты для TheRealCam. Вернитесь в камеру"
+            else "Root не сработал: нет доступа su или прошивка не использует этот список"
+        } else {
+            g.settings.setRootCamera(false)
+            _status.value = "Root-доступ к камерам выключен"
+        }
+        _rootLog.value = r.output.ifBlank { null }
+        _busy.value = false
+    }
     fun setJpegQuality(q: Int) = viewModelScope.launch { g.settings.setJpegQuality(q) }
     fun setDatasetImageMaxSide(px: Int) = viewModelScope.launch { g.settings.setDatasetImageMaxSide(px) }
 
