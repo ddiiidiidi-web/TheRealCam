@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import com.therealcam.AppGraph
+import com.therealcam.ai.CapturePlanner
 import com.therealcam.ai.SceneFeatures
 import com.therealcam.ai.ScenePreview
 import com.therealcam.camera.CameraCaps
@@ -118,6 +119,10 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val dir = g.paths.seriesDir(seriesId).apply { mkdirs() }
         val records = ArrayList<FrameRecord>(frames)
         var settings = plan.settings
+        // AI series only: leading frames meter the scene and the AI corrects exposure/ISO for the rest.
+        // Manual settings are the user's choice and are never changed.
+        val meterBudget = if (plan.mode == CameraMode.AI && plan.settings.manualExposure) SeriesMeter.meteringBudget(frames) else 0
+        var metered = 0
         for (i in 0 until frames) {
             if (i > 0 && stop()) break
             onProgress(Progress.Capturing(i + 1, frames, settings.exposureNs))
@@ -127,7 +132,13 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
             file.writeBytes(f.jpeg)
             val m = MetaBuilder.exposureMotion(g.sensors, f.exposureStartRt, f.exposureEndRt, env.caps.focalLengthPx)
             records += FrameRecord(i, Ids.newSampleId(frameTime), frameTime, file, f, settings, m)
-            if (i == 0 && frames >= 3) settings = adaptAfterFirstFrame(settings, plan.profile, file, env.caps)
+            if (i == metered && metered < meterBudget) {
+                val next = meterNext(settings, plan.profile, file, m, env)
+                if (next == null) metered = meterBudget else {
+                    settings = next
+                    metered++
+                }
+            }
         }
 
         val captured = records.size
@@ -196,26 +207,33 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         return result
     }
 
-    /** Frame 0 of a sky/moon series meters the highlights; the remaining frames use the corrected exposure. */
-    private fun adaptAfterFirstFrame(s: ShotSettings, profile: Profile, file: File, caps: CameraCaps): ShotSettings {
-        if (!s.manualExposure || (profile != Profile.LUNAR && profile != Profile.SKY)) return s
-        val bmp = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = 8 }) ?: return s
+    /** Settings for the frames after a metering frame, or null to keep them (see [SeriesMeter]). */
+    private fun meterNext(s: ShotSettings, profile: Profile, file: File, motion: MetaBuilder.ExposureMotion, env: Env): ShotSettings? {
+        val exp = s.exposureNs ?: return null
+        val iso = s.iso ?: return null
+        val bmp = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = 8 }) ?: return null
         val px = ImageIo.toArgb(bmp)
+        val w = bmp.width
+        val h = bmp.height
         bmp.recycle()
-        var clipped = 0
-        var bright = 0
-        for (p in px) {
-            val l = SceneFeatures.luma(p)
-            if (l >= 0.98f) clipped++
-            if (l >= 0.45f) bright++
-        }
-        val exp = s.exposureNs!!
-        val range = caps.exposureRange
-        return when {
-            clipped > px.size * 0.002 -> s.copy(exposureNs = max(exp / 2, range?.lower ?: 1L))
-            profile == Profile.LUNAR && bright == 0 -> s.copy(exposureNs = min(exp * 2, range?.upper ?: exp * 2))
-            else -> s
-        }
+        val luma = FloatArray(px.size) { SceneFeatures.luma(px[it]) }
+        val k = SeriesMeter.correction(profile, SeriesMeter.stats(luma, w, h))
+        val er = env.caps.exposureRange
+        val ir = env.caps.isoRange
+        val handheldNs = (CapturePlanner.HANDHELD_MAX_S * 1e9).toLong()
+        val lim = SeriesMeter.Limits(
+            minExpNs = er?.lower ?: exp,
+            maxExpNs = er?.upper ?: exp,
+            brightenMaxExpNs = when {
+                profile == Profile.LUNAR -> exp
+                env.motion.steady -> er?.upper ?: exp
+                else -> max(exp, handheldNs)
+            },
+            minIso = ir?.lower ?: iso,
+            maxIso = ir?.upper ?: iso,
+        )
+        val (e, i) = SeriesMeter.apply(exp, iso, k, motion.blurPx, profile, lim) ?: return null
+        return s.copy(exposureNs = e, iso = i)
     }
 
     private fun entity(
