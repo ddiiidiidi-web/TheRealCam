@@ -31,6 +31,10 @@ data class AppSettings(
     val activeModel: String? = null,
     val lastMode: String = "auto",
     val lastCategoryHint: String? = null,
+    /** VIDEO mode: VideoQuality key, frame rate and stabilization wish (applied when the camera supports it). */
+    val videoQuality: String = "1080p",
+    val videoFps: Int = 30,
+    val videoStabilization: Boolean = true,
     /** The first-run screen (own dataset or a shared model) was completed or skipped. */
     val onboarded: Boolean = false,
     /** Astro mode: total shooting time of one picture. */
@@ -69,6 +73,9 @@ class SettingsRepository(private val context: Context) {
         val activeModel = stringPreferencesKey("active_model")
         val lastMode = stringPreferencesKey("last_mode")
         val lastCategoryHint = stringPreferencesKey("last_category_hint")
+        val videoQuality = stringPreferencesKey("video_quality")
+        val videoFps = intPreferencesKey("video_fps")
+        val videoStabilization = booleanPreferencesKey("video_stabilization")
         val onboarded = booleanPreferencesKey("onboarded")
         val astroDurationS = intPreferencesKey("astro_duration_s")
         val voice = booleanPreferencesKey("voice")
@@ -102,6 +109,9 @@ class SettingsRepository(private val context: Context) {
             activeModel = this[K.activeModel],
             lastMode = this[K.lastMode] ?: d.lastMode,
             lastCategoryHint = this[K.lastCategoryHint],
+            videoQuality = this[K.videoQuality] ?: d.videoQuality,
+            videoFps = this[K.videoFps] ?: d.videoFps,
+            videoStabilization = this[K.videoStabilization] ?: d.videoStabilization,
             onboarded = this[K.onboarded] ?: d.onboarded,
             astroDurationS = this[K.astroDurationS] ?: d.astroDurationS,
             voice = this[K.voice] ?: d.voice,
@@ -129,6 +139,11 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLevel(v: Boolean) = context.dataStore.edit { it[K.level] = v }
     suspend fun setVolumeShutter(v: Boolean) = context.dataStore.edit { it[K.volumeShutter] = v }
     suspend fun setTimerSeconds(v: Int) = context.dataStore.edit { it[K.timerSeconds] = v }
+    suspend fun setVideo(quality: String, fps: Int, stabilization: Boolean) = context.dataStore.edit {
+        it[K.videoQuality] = quality
+        it[K.videoFps] = fps
+        it[K.videoStabilization] = stabilization
+    }
     suspend fun setLastMode(v: String) = context.dataStore.edit { it[K.lastMode] = v }
     suspend fun setOnboarded(v: Boolean) = context.dataStore.edit { it[K.onboarded] = v }
     suspend fun setAstroDurationS(v: Int) = context.dataStore.edit { it[K.astroDurationS] = v.coerceIn(10, 3600) }

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -102,6 +101,7 @@ fun CameraScreen(
     val lenses by vm.lenses.collectAsState()
     val lens by vm.lens.collectAsState()
     val zoom by vm.zoom.collectAsState()
+    val recording by vm.video.recording.collectAsState()
     val rot = rotationFor(motion.deviceOrientation)
     DimWhile(busy != null && mode == CameraMode.ASTRO)
 
@@ -112,7 +112,7 @@ fun CameraScreen(
                 Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TopIcon(Icons.Filled.Settings, "Настройки", rot) { onSettings() }
+                TopIcon(Icons.Filled.Settings, "Настройки", rot) { if (!recording) onSettings() }
                 TopIcon(Icons.Filled.Timer, "Таймер", rot, badge = settings.timerSeconds.takeIf { it > 0 }?.let { "${it}с" }) {
                     vm.setTimer(when (settings.timerSeconds) { 0 -> 3; 3 -> 10; else -> 0 })
                 }
@@ -142,7 +142,7 @@ fun CameraScreen(
             }
 
             // ---------------------------------------------------------------- preview
-            Box(Modifier.fillMaxWidth().aspectRatio(3f / 4f)) {
+            Box(previewArea(mode == CameraMode.VIDEO)) {
                 PreviewView(vm, Modifier.fillMaxSize())
                 if (settings.grid) GridOverlay()
                 if (settings.level) LevelOverlay(motion.rollDeg, motion.pitchDeg, motion.deviceOrientation)
@@ -157,6 +157,7 @@ fun CameraScreen(
                         onZoom = vm::setZoom,
                     )
                 }
+                if (recording) RecordingBadge(vm.video.elapsedS.collectAsState().value, Modifier.align(Alignment.TopCenter).padding(top = 10.dp))
 
                 val needTripod = when (mode) {
                     CameraMode.AI -> ai?.plan?.needsTripod == true
@@ -166,6 +167,7 @@ fun CameraScreen(
                         (s.exposureNs ?: 0L) >= 66_000_000L || (s.frames > 1 && (s.exposureNs ?: 0L) * s.frames >= 1_000_000_000L)
                     }
                     CameraMode.AUTO -> false
+                    CameraMode.VIDEO -> false
                 }
                 if (needTripod) {
                     Box(
@@ -197,7 +199,7 @@ fun CameraScreen(
             }
 
             // ---------------------------------------------------------------- controls
-            Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.SpaceEvenly) {
+            Column(controlsArea(mode == CameraMode.VIDEO), verticalArrangement = Arrangement.SpaceEvenly) {
                 when (mode) {
                     CameraMode.AUTO -> {
                         EvRow(vm.autoEv.collectAsState().value, vm::setAutoEv)
@@ -221,8 +223,9 @@ fun CameraScreen(
                         vm::setAstroDuration, { vm.setVoice(it) },
                     )
                     CameraMode.AI -> AiControls(model, vm.modelError.collectAsState().value, ai, datasetCount, rot, vm::pickAiClass)
+                    CameraMode.VIDEO -> VideoControls(vm.video, rot)
                 }
-                ModeSwitcher(mode, enabled = busy == null, onMode = vm::setMode)
+                ModeSwitcher(mode, enabled = busy == null && !recording, onMode = vm::setMode)
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 28.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -230,14 +233,16 @@ fun CameraScreen(
                 ) {
                     Box(
                         Modifier.size(52.dp).clip(CircleShape).background(RealColors.SurfaceHigh)
-                            .clickable { onGallery(latest?.id) },
+                            .clickable(enabled = !recording) { onGallery(latest?.id) },
                     ) {
                         latest?.let {
                             AsyncImage(model = it.imageUri, contentDescription = "Последний снимок", contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize().rotate(rot))
                         }
                     }
-                    Shutter(busy, countdown != null, onClick = {
+                    if (mode == CameraMode.VIDEO) {
+                        RecordButton(recording, onClick = vm::onShutter)
+                    } else Shutter(busy, countdown != null, onClick = {
                         when {
                             busy != null -> vm.requestStop()
                             countdown != null -> vm.cancelShot()
@@ -246,7 +251,7 @@ fun CameraScreen(
                     })
                     Box(
                         Modifier.size(52.dp).clip(CircleShape).background(RealColors.SurfaceHigh)
-                            .clickable(enabled = busy == null) { vm.switchCamera() },
+                            .clickable(enabled = busy == null && !recording) { vm.switchCamera() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(Icons.Filled.FlipCameraAndroid, "Сменить камеру", tint = Color.White, modifier = Modifier.rotate(rot))

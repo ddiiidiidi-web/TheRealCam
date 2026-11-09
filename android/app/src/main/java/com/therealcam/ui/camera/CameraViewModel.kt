@@ -99,6 +99,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val ratingFor = _ratingFor.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
+    /** VIDEO mode: video session and recording. */
+    val video = VideoSession(
+        app, camera, g.settings, viewModelScope, deviceOrientation = { motion.value.deviceOrientation },
+        reopen = { openIfReady() }, message = { _message.value = it },
+    )
     private val _ai = MutableStateFlow<AiState?>(null)
     val ai = _ai.asStateFlow()
     /** Exposure meter of the last analysed preview, EV relative to mid-grey. */
@@ -149,6 +154,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val s = g.settings.settings.first()
             _mode.value = CameraMode.of(s.lastMode)
+            // The camera may already be open in the photo configuration.
+            if (_mode.value == CameraMode.VIDEO) openIfReady()
             _categoryHint.value = s.lastCategoryHint
             _preset.value = ScenePreset.of(s.lastPreset).takeIf { it != ScenePreset.STARS } ?: ScenePreset.NIGHT
             applyPreviewSettings()
@@ -201,7 +208,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         analysisJob?.cancel()
         g.sensors.release()
         g.location.stop()
-        viewModelScope.launch { camera.close() }
+        viewModelScope.launch {
+            video.stop()
+            camera.close()
+        }
     }
 
     fun observeCapture(id: String) = g.captures.observe(id)
@@ -213,6 +223,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private fun openIfReady() {
         val t = texture ?: return
         if (!resumed) return
+        // A new session would cut the recording.
+        if (video.recording.value) return
         viewModelScope.launch {
             try {
                 val (back, frontId) = camera.cameraIds()
@@ -222,7 +234,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val l = _lens.value
                 camera.setZoomRatio(l?.ratioFor(_zoom.value) ?: 1f, applyNow = false)
-                camera.open(l?.cameraId ?: fallback, t)
+                if (_mode.value == CameraMode.VIDEO) video.open(l?.cameraId ?: fallback, t)
+                else camera.open(l?.cameraId ?: fallback, t)
                 applyPreviewSettings()
             } catch (e: Exception) {
                 val l = _lens.value
@@ -262,6 +275,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (_busy.value != null || _countdown.value != null) return
         pinchZoom = null
         val reopen = camera.caps.value?.id != l.cameraId
+        if (reopen && video.recording.value) {
+            _message.value = "Во время записи этот объектив не включить"
+            return
+        }
         _lens.value = l
         _zoom.value = l.zoom
         camera.setZoomRatio(l.baseRatio, applyNow = !reopen)
@@ -309,6 +326,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (_lens.value?.kind == LensKind.MACRO) return
         val best = ZoomMath.lensFor(_lenses.value, target) ?: return
         if (best.cameraId == camera.caps.value?.id) return
+        if (video.recording.value) return
         // The requested view is better served by another camera id: switch to it now.
         _lens.value = best
         _zoom.value = target.coerceIn(best.minZoom, best.maxZoom)
@@ -317,6 +335,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        video.release()
         camera.release()
         shutterSound.release()
         voice?.shutdown()
@@ -325,7 +344,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------ controls
 
     fun setMode(m: CameraMode) {
-        if (_mode.value == m) return
+        if (_mode.value == m || video.recording.value) return
+        val sessionChanges = (_mode.value == CameraMode.VIDEO) != (m == CameraMode.VIDEO)
         _mode.value = m
         _ai.value = null
         smoothed = null
@@ -333,6 +353,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (m == CameraMode.ASTRO) camera.caps.value?.let { _astro.value = astroPlan(it) }
         if (m == CameraMode.PRESET) camera.caps.value?.let { _presetPlan.value = presetPlan(it) }
         applyPreviewSettings()
+        // VIDEO uses its own session (16:9 preview + recorder surface instead of the JPEG reader).
+        if (sessionChanges) openIfReady()
     }
 
     fun setAstroDuration(s: Int) {
@@ -428,7 +450,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun switchCamera() {
-        if (_busy.value != null) return
+        if (_busy.value != null || video.recording.value) return
         _front.value = !_front.value
         _shot.value = ShotSettings(frames = _shot.value.frames, stackMode = _shot.value.stackMode)
         pinchZoom = null
@@ -500,7 +522,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun focusAt(u: Float, v: Float) {
         if (_mode.value == CameraMode.MANUAL && _shot.value.focus != FocusMode.AUTO) return
-        camera.focusAt(u, v)
+        camera.focusAt(if (_mode.value == CameraMode.VIDEO) video.tapU(u) else u, v)
     }
 
     fun pickAiClass(k: Int) {
@@ -545,6 +567,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         CameraMode.AI -> ShotSettings(torch = _torch.value)
+        CameraMode.VIDEO -> ShotSettings(torch = _torch.value)
     }
 
     private fun applyPreviewSettings() = camera.setShot(previewSettings())
@@ -571,7 +594,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         analysisJob = viewModelScope.launch {
             while (isActive) {
                 delay(if (_mode.value == CameraMode.AI) 450L else 800L)
-                if (_busy.value != null || _mode.value == CameraMode.AUTO) continue
+                if (_busy.value != null || _mode.value == CameraMode.AUTO || _mode.value == CameraMode.VIDEO) continue
                 val caps = camera.caps.value ?: continue
                 val scene = sceneGrabber?.invoke() ?: continue
                 val ctx = featureContext()
@@ -614,6 +637,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------ shutter
 
     fun onShutter() {
+        if (_mode.value == CameraMode.VIDEO) {
+            video.toggle()
+            return
+        }
         if (_busy.value != null || _countdown.value != null) return
         val caps = camera.caps.value ?: return
         _ratingFor.value = null
@@ -766,6 +793,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     ShotRunner.Plan(CameraMode.AI, plan.settings.copy(torch = _torch.value), plan.profile, userCategory ?: hint, info, app.timerSeconds)
                 }
             }
+            // Not reached: the shutter records video in VIDEO mode.
+            CameraMode.VIDEO -> ShotRunner.Plan(
+                CameraMode.AUTO, ShotSettings(torch = _torch.value), hintProfile(), hint, null, app.timerSeconds,
+            )
         }
     }
 
