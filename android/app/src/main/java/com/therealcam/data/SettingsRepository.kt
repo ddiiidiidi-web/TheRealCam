@@ -31,6 +31,8 @@ data class AppSettings(
     val activeModel: String? = null,
     val lastMode: String = "auto",
     val lastCategoryHint: String? = null,
+    /** The first-run screen (own dataset or a shared model) was completed or skipped. */
+    val onboarded: Boolean = false,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -49,6 +51,7 @@ class SettingsRepository(private val context: Context) {
         val activeModel = stringPreferencesKey("active_model")
         val lastMode = stringPreferencesKey("last_mode")
         val lastCategoryHint = stringPreferencesKey("last_category_hint")
+        val onboarded = booleanPreferencesKey("onboarded")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }
@@ -72,6 +75,7 @@ class SettingsRepository(private val context: Context) {
             activeModel = this[K.activeModel],
             lastMode = this[K.lastMode] ?: d.lastMode,
             lastCategoryHint = this[K.lastCategoryHint],
+            onboarded = this[K.onboarded] ?: d.onboarded,
         )
     }
 
@@ -90,6 +94,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setVolumeShutter(v: Boolean) = context.dataStore.edit { it[K.volumeShutter] = v }
     suspend fun setTimerSeconds(v: Int) = context.dataStore.edit { it[K.timerSeconds] = v }
     suspend fun setLastMode(v: String) = context.dataStore.edit { it[K.lastMode] = v }
+    suspend fun setOnboarded(v: Boolean) = context.dataStore.edit { it[K.onboarded] = v }
 
     suspend fun setActiveModel(fileName: String?) = context.dataStore.edit {
         if (fileName == null) it.remove(K.activeModel) else it[K.activeModel] = fileName

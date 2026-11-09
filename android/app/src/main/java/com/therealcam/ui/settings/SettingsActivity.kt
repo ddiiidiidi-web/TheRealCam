@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.therealcam.BuildConfig
 import com.therealcam.dataset.MIN_DATASET_SAMPLES
 import com.therealcam.ui.common.CategoriesScreen
+import com.therealcam.ui.common.DatasetConsentDialog
 import com.therealcam.ui.common.SceneIcons
 import com.therealcam.ui.theme.RealColors
 import com.therealcam.ui.theme.RealTheme
@@ -86,22 +87,6 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 }
-
-/** Shown before dataset collection is enabled: lists everything that is recorded. */
-const val CONSENT_TEXT = """В режиме сбора датасета для каждого снимка сохраняется:
-
-• геометка (если разрешена геопозиция);
-• положение телефона: наклон, крен, азимут;
-• гироскоп и акселерометр за 1,5 с до кадра, во время выдержки и 0,75 с после;
-• параметры кадра: выдержка, ISO, диафрагма, фокус, баланс белого, режимы автоматики;
-• то, что вы выставили вручную (или выбрал ИИ), число кадров серии, способ сведения;
-• освещённость, давление, температура батареи, высота Солнца и Луны, фаза Луны, время;
-• маленькое превью сцены и числовые признаки, которые видит модель;
-• ваша оценка 1–10, оценка по критериям и категория.
-
-Всё хранится только на телефоне, в папке приложения (Android/data/com.therealcam/files/TheRealCam). У приложения нет доступа к интернету, поэтому данные никуда не отправляются. Наружу они попадают только при экспорте ZIP, который делаете вы.
-
-В обучение идут только снимки, оценённые по всем критериям. Минимум для обучения — 150 снимков."""
 
 @Composable
 private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategories: () -> Unit) {
@@ -216,13 +201,7 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
     }
 
     if (consent) {
-        AlertDialog(
-            onDismissRequest = { consent = false },
-            title = { Text("Сбор датасета") },
-            text = { Text(CONSENT_TEXT, fontSize = 13.sp, modifier = Modifier.verticalScroll(rememberScrollState())) },
-            confirmButton = { TextButton(onClick = { consent = false; vm.setDatasetMode(true) }) { Text("Включить") } },
-            dismissButton = { TextButton(onClick = { consent = false }) { Text("Отмена") } },
-        )
+        DatasetConsentDialog(onAccept = { consent = false; vm.setDatasetMode(true) }, onDismiss = { consent = false })
     }
 }
 
