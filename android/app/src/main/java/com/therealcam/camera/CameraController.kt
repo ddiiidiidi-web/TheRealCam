@@ -58,6 +58,8 @@ class CameraController(context: Context) {
     @Volatile private var region: MeteringRectangle? = null
     /** CONTROL_ZOOM_RATIO on API 30+ cameras that support it, otherwise a centred crop factor. */
     @Volatile private var zoomRatio = 1f
+    /** Set while the session is the VIDEO one (preview + recorder surface, no JPEG reader). */
+    @Volatile private var video: VideoOutput? = null
 
     private val _caps = MutableStateFlow<CameraCaps?>(null)
     /** Non-null while a session is running. */
@@ -110,10 +112,46 @@ class CameraController(context: Context) {
         }
     }
 
+    /** VIDEO session: preview with the video aspect plus the recorder's persistent surface. */
+    suspend fun openVideo(cameraId: String, texture: SurfaceTexture, out: VideoOutput): CameraCaps = lock.withLock {
+        closeLocked()
+        _error.value = null
+        val c = CameraCaps.read(manager, cameraId)
+        texture.setDefaultBufferSize(out.spec.preview.width, out.spec.preview.height)
+        val surface = Surface(texture)
+        try {
+            val d = openDevice(cameraId)
+            device = d
+            previewSurface = surface
+            video = out
+            session = createSession(d, listOf(surface, out.recorder))
+            shot = shot.copy(focus = if (c.canManualFocus) shot.focus else FocusMode.AUTO)
+            region = null
+            _caps.value = c
+            startPreviewLocked(c)
+            c
+        } catch (t: Throwable) {
+            _error.value = t.message ?: t.javaClass.simpleName
+            closeLocked()
+            surface.release()
+            throw t
+        }
+    }
+
+    /** VIDEO: adds or removes the recorder surface in the repeating request; false without a video session. */
+    suspend fun setRecording(on: Boolean): Boolean = lock.withLock {
+        val v = video ?: return@withLock false
+        val c = _caps.value ?: return@withLock false
+        v.recording = on
+        startPreviewLocked(c)
+        true
+    }
+
     suspend fun close() = lock.withLock { closeLocked() }
 
     private fun closeLocked() {
         _caps.value = null
+        video = null
         runCatching { session?.close() }
         runCatching { device?.close() }
         runCatching { reader?.close() }
@@ -237,9 +275,11 @@ class CameraController(context: Context) {
 
     private fun previewBuilder(c: CameraCaps): CaptureRequest.Builder {
         val d = device ?: throw IOException("no device")
-        val b = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+        val v = video
+        val b = d.createCaptureRequest(if (v != null) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW)
         b.addTarget(previewSurface ?: throw IOException("no surface"))
         apply3A(b, shot, c, preview = true)
+        v?.applyTo(b, c)
         return b
     }
 
