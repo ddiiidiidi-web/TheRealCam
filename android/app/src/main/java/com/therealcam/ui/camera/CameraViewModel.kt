@@ -230,7 +230,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (_busy.value != null || _countdown.value != null) return
         pinchZoom = null
         val reopen = camera.caps.value?.id != l.cameraId
-        if (reopen && video.recording.value) return
+        if (reopen && video.recording.value) {
+            _message.value = "Во время записи этот объектив не включить"
+            return
+        }
         _lens.value = l
         _zoom.value = l.zoom
         camera.setZoomRatio(l.baseRatio, applyNow = !reopen)
