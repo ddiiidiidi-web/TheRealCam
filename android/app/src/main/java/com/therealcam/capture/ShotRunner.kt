@@ -55,6 +55,8 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val ai: AiInfo?,
         val timerS: Int,
         val lens: LensUse? = null,
+        /** ScenePreset key in the СЦЕНЫ mode. */
+        val preset: String? = null,
     )
 
     data class Env(
@@ -123,9 +125,9 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val dir = g.paths.seriesDir(seriesId).apply { mkdirs() }
         val records = ArrayList<FrameRecord>(frames)
         var settings = plan.settings
-        // Automatic series only (AI and astro): leading frames meter the scene and exposure/ISO of the
+        // Automatic series only (AI, scenes and astro): leading frames meter the scene and exposure/ISO of the
         // rest are corrected. Manual settings are the user's choice and are never changed.
-        val auto = plan.mode == CameraMode.AI || plan.mode == CameraMode.ASTRO
+        val auto = plan.mode == CameraMode.AI || plan.mode == CameraMode.ASTRO || plan.mode == CameraMode.PRESET
         val meterBudget = if (auto && plan.settings.manualExposure) SeriesMeter.meteringBudget(frames) else 0
         var metered = 0
         val seriesStart = SystemClock.elapsedRealtime()
@@ -280,7 +282,7 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
                 mode = plan.mode.key,
                 photo = PhotoInfo(photoRole, width, height, orientation, env.app.jpegQuality, fileName),
                 capture = MetaBuilder.capture(frame.meta),
-                userSettings = MetaBuilder.userSettings(plan.settings, plan.timerS, plan.categoryId, plan.lens),
+                userSettings = MetaBuilder.userSettings(plan.settings, plan.timerS, plan.categoryId, plan.lens, plan.preset),
                 series = series,
                 location = MetaBuilder.location(location),
                 orientation = MetaBuilder.orientation(env.motion),

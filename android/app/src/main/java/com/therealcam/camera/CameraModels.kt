@@ -10,6 +10,7 @@ import kotlin.math.roundToLong
 enum class CameraMode(val key: String, val label: String) {
     AUTO("auto", "АВТО"),
     MANUAL("manual", "РУЧНОЙ"),
+    PRESET("preset", "СЦЕНЫ"),
     ASTRO("astro", "АСТРО"),
     AI("ai", "AI");
 

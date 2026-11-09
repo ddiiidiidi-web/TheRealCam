@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.therealcam.ai.AstroPlanner
 import com.therealcam.ai.engine.TrcmModel
+import com.therealcam.capture.PresetPlanner
+import com.therealcam.capture.ScenePreset
 import com.therealcam.camera.CameraCaps
 import com.therealcam.camera.CameraMode
 import com.therealcam.camera.ExposureScale
@@ -70,8 +72,13 @@ fun rotationFor(deviceOrientation: Int): Float {
 
 @Composable
 fun ModeSwitcher(mode: CameraMode, enabled: Boolean, onMode: (CameraMode) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        CameraMode.entries.forEach { m ->
+    val modes = CameraMode.entries
+    val state = rememberLazyListState()
+    val idx = modes.indexOf(mode)
+    // Keep the selected mode in view: there are more modes than fit on a narrow screen.
+    LaunchedEffect(idx) { if (idx >= 0) state.animateScrollToItem((idx - 1).coerceAtLeast(0)) }
+    LazyRow(state = state, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        itemsIndexed(modes) { _, m ->
             val sel = m == mode
             Text(
                 m.label,
@@ -81,7 +88,7 @@ fun ModeSwitcher(mode: CameraMode, enabled: Boolean, onMode: (CameraMode) -> Uni
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
                     .clickable(enabled = enabled) { onMode(m) }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
     }
@@ -358,5 +365,46 @@ fun AstroControls(
             else -> "Телефон неподвижен. Фары и самолёты уберутся при сведении"
         }
         Text(hint, color = if (!steady) RealColors.Warn else RealColors.TextDim, fontSize = 11.sp, maxLines = 2)
+    }
+}
+
+/** СЦЕНЫ mode: scene buttons with icons, the plan for the chosen one and what it does. */
+@Composable
+fun PresetControls(
+    preset: ScenePreset,
+    plan: PresetPlanner.Plan?,
+    steady: Boolean,
+    orientation: Float,
+    onPreset: (ScenePreset) -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val state = rememberLazyListState()
+        val idx = ScenePreset.entries.indexOf(preset)
+        LaunchedEffect(idx) { if (idx >= 0) state.animateScrollToItem((idx - 2).coerceAtLeast(0)) }
+        LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(ScenePreset.entries) { _, p ->
+                val sel = p == preset
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(62.dp).clip(RoundedCornerShape(10.dp)).clickable { onPreset(p) }.padding(vertical = 2.dp),
+                ) {
+                    Box(
+                        Modifier.size(40.dp).clip(CircleShape).background(if (sel) RealColors.Accent else RealColors.SurfaceHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(SceneIcons.of(p.icon), p.title, tint = if (sel) Color.Black else Color.White,
+                            modifier = Modifier.size(22.dp).rotate(orientation))
+                    }
+                    Text(p.title, fontSize = 10.sp, maxLines = 1, color = if (sel) RealColors.Accent else RealColors.TextDim)
+                }
+            }
+        }
+        Text(plan?.label ?: "Смотрю на сцену…", color = Color.White, fontSize = 12.sp, maxLines = 1)
+        val warn = plan?.needsTripod == true && !steady
+        Text(plan?.hint ?: "", color = if (warn) RealColors.Warn else RealColors.TextDim, fontSize = 11.sp, maxLines = 2)
     }
 }

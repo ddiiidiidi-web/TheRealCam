@@ -105,6 +105,8 @@ data class UserSettingsInfo(
     val zoom: Float? = null,
     /** 35 mm equivalent focal length at that zoom. */
     val equivFocalMm: Float? = null,
+    /** Scene of the СЦЕНЫ mode: night, clouds, sunset, moon, trails, water, action, document. */
+    val preset: String? = null,
 )
 
 @Serializable

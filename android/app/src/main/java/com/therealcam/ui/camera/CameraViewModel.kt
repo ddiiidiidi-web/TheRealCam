@@ -26,6 +26,8 @@ import com.therealcam.camera.LensProbe
 import com.therealcam.camera.LensUse
 import com.therealcam.camera.ShotSettings
 import com.therealcam.camera.ZoomMath
+import com.therealcam.capture.PresetPlanner
+import com.therealcam.capture.ScenePreset
 import com.therealcam.capture.ShotRunner
 import com.therealcam.capture.SpeechText
 import com.therealcam.capture.VoiceAnnouncer
@@ -116,6 +118,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Astro mode plan (frames × exposure · ISO), refreshed from the preview meter. */
     private val _astro = MutableStateFlow<AstroPlanner.Plan?>(null)
     val astro = _astro.asStateFlow()
+    /** Scene of the СЦЕНЫ mode and its plan, refreshed from the preview meter. */
+    private val _preset = MutableStateFlow(ScenePreset.NIGHT)
+    val preset = _preset.asStateFlow()
+    private val _presetPlan = MutableStateFlow<PresetPlanner.Plan?>(null)
+    val presetPlan = _presetPlan.asStateFlow()
     /** Seconds left until a long series finishes capturing. */
     private val _remainingS = MutableStateFlow<Int?>(null)
     val remainingS = _remainingS.asStateFlow()
@@ -138,6 +145,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             val s = g.settings.settings.first()
             _mode.value = CameraMode.of(s.lastMode)
             _categoryHint.value = s.lastCategoryHint
+            _preset.value = ScenePreset.of(s.lastPreset).takeIf { it != ScenePreset.STARS } ?: ScenePreset.NIGHT
             applyPreviewSettings()
         }
         viewModelScope.launch {
@@ -299,6 +307,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         smoothed = null
         viewModelScope.launch { g.settings.setLastMode(m.key) }
         if (m == CameraMode.ASTRO) camera.caps.value?.let { _astro.value = astroPlan(it) }
+        if (m == CameraMode.PRESET) camera.caps.value?.let { _presetPlan.value = presetPlan(it) }
         applyPreviewSettings()
     }
 
@@ -308,6 +317,39 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setVoice(on: Boolean) = viewModelScope.launch { g.settings.setVoice(on) }
+
+    /** Scene button; "Звёзды" opens the АСТРО mode, which has its own controls. */
+    fun setPreset(p: ScenePreset) {
+        if (_busy.value != null) return
+        if (p == ScenePreset.STARS) {
+            setMode(CameraMode.ASTRO)
+            return
+        }
+        _preset.value = p
+        viewModelScope.launch { g.settings.setLastPreset(p.key) }
+        camera.caps.value?.let { _presetPlan.value = presetPlan(it) }
+        applyPreviewSettings()
+    }
+
+    private fun presetPlan(caps: CameraCaps): PresetPlanner.Plan {
+        val p = camera.preview.value
+        return PresetPlanner.plan(
+            _preset.value,
+            PresetPlanner.Input(
+                manualSensor = caps.manualSensor,
+                minExpNs = caps.exposureRange?.lower,
+                maxExpNs = caps.exposureRange?.upper,
+                minIso = caps.isoRange?.lower,
+                maxIso = caps.isoRange?.upper,
+                canFocusInfinity = caps.canManualFocus,
+                aperture = p?.aperture ?: caps.apertures.firstOrNull(),
+                previewExpNs = p?.exposureNs,
+                previewIso = p?.iso,
+                previewMeanLin = lastMeanLin,
+                steady = motion.value.steady,
+            ),
+        )
+    }
 
     private fun astroPlan(caps: CameraCaps, durationS: Int = settings.value.astroDurationS): AstroPlanner.Plan {
         val p = camera.preview.value
@@ -440,6 +482,15 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         CameraMode.AUTO -> ShotSettings(ev = _autoEv.value, torch = _torch.value)
         CameraMode.MANUAL -> _shot.value.copy(torch = _torch.value)
         CameraMode.ASTRO -> ShotSettings(focus = FocusMode.INFINITY, torch = _torch.value)
+        CameraMode.PRESET -> {
+            val caps = camera.caps.value
+            when {
+                // The moon is exposed manually from the start: auto exposure would burn the disc against the black sky.
+                _preset.value == ScenePreset.MOON && caps != null -> presetPlan(caps).settings.copy(frames = 1, torch = _torch.value)
+                _preset.value in INFINITY_PRESETS && caps?.canManualFocus == true -> ShotSettings(focus = FocusMode.INFINITY, torch = _torch.value)
+                else -> ShotSettings(torch = _torch.value)
+            }
+        }
         CameraMode.AI -> ShotSettings(torch = _torch.value)
     }
 
@@ -485,6 +536,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     _astro.value = astroPlan(caps)
                     continue
                 }
+                if (_mode.value == CameraMode.PRESET) {
+                    _presetPlan.value = presetPlan(caps)
+                    continue
+                }
                 val out = result.second
                 if (out == null || m == null || _mode.value != CameraMode.AI) continue
                 lastOutput = out
@@ -508,8 +563,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _ratingFor.value = null
         shotJob = viewModelScope.launch {
             val app = settings.value
-            // Astro: a short delay so pressing the shutter does not shake the first frame.
-            val timer = if (_mode.value == CameraMode.ASTRO) maxOf(app.timerSeconds, 3) else app.timerSeconds
+            // Astro and tripod scenes: a short delay so pressing the shutter does not shake the first frame.
+            val tripodScene = _mode.value == CameraMode.PRESET && _presetPlan.value?.needsTripod == true && motion.value.steady
+            val timer = when {
+                _mode.value == CameraMode.ASTRO -> maxOf(app.timerSeconds, 3)
+                tripodScene -> maxOf(app.timerSeconds, 2)
+                else -> app.timerSeconds
+            }
             for (s in timer downTo 1) {
                 _countdown.value = s
                 delay(1000)
@@ -625,6 +685,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val cat = hint ?: categories.value.firstOrNull { SceneKeys.profileOf(it.icon) == Profile.ASTRO }?.id
                 ShotRunner.Plan(CameraMode.ASTRO, settings, Profile.ASTRO, cat, null, app.timerSeconds)
             }
+            CameraMode.PRESET -> {
+                val p = _preset.value
+                val settings = (camera.caps.value?.let { presetPlan(it).settings } ?: _presetPlan.value?.settings ?: ShotSettings())
+                    .copy(torch = _torch.value)
+                val cat = hint ?: categories.value.firstOrNull { SceneKeys.profileOf(it.icon) == p.profile }?.id
+                ShotRunner.Plan(CameraMode.PRESET, settings, p.profile, cat, null, app.timerSeconds, preset = p.key)
+            }
             CameraMode.AI -> {
                 val m = model.value
                 val st = _ai.value
@@ -651,5 +718,6 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         /** Series at least this long show the time left; from [SPEAK_MIN_MS] it is also spoken. */
         const val COUNTDOWN_MIN_MS = 10_000L
         const val SPEAK_MIN_MS = 30_000L
+        val INFINITY_PRESETS = setOf(ScenePreset.CLOUDS, ScenePreset.SUNSET, ScenePreset.MOON, ScenePreset.TRAILS)
     }
 }

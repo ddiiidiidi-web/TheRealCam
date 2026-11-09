@@ -155,6 +155,7 @@ fun CameraScreen(
                 val needTripod = when (mode) {
                     CameraMode.AI -> ai?.plan?.needsTripod == true
                     CameraMode.ASTRO -> true
+                    CameraMode.PRESET -> vm.presetPlan.collectAsState().value?.needsTripod == true
                     CameraMode.MANUAL -> vm.shot.collectAsState().value.let { s ->
                         (s.exposureNs ?: 0L) >= 66_000_000L || (s.frames > 1 && (s.exposureNs ?: 0L) * s.frames >= 1_000_000_000L)
                     }
@@ -203,6 +204,9 @@ fun CameraScreen(
                         )
                         HintRow(vm.categories.collectAsState().value, vm.categoryHint.collectAsState().value, rot, vm::setCategoryHint)
                     }
+                    CameraMode.PRESET -> PresetControls(
+                        vm.preset.collectAsState().value, vm.presetPlan.collectAsState().value, motion.steady, rot, vm::setPreset,
+                    )
                     CameraMode.ASTRO -> AstroControls(
                         vm.astro.collectAsState().value, settings.astroDurationS, settings.voice, motion.steady,
                         vm::setAstroDuration, { vm.setVoice(it) },
