@@ -80,10 +80,17 @@ class SeriesMeterTest {
 
     @Test
     fun handheldBlurTradesExposureForIso() {
-        val (e, iso) = SeriesMeter.apply(1_000_000_000L, 800, null, 8.0, Profile.ASTRO, lim)!!
+        val (e, iso) = SeriesMeter.apply(1_000_000_000L, 800, null, 8.0, Profile.ASTRO, lim, motionRms = 0.03)!!
         assertEquals(250_000_000L, e)
         assertEquals(3200, iso)
-        assertNull(SeriesMeter.apply(1_000_000_000L, 800, null, 1.0, Profile.ASTRO, lim))
+        assertNull(SeriesMeter.apply(1_000_000_000L, 800, null, 1.0, Profile.ASTRO, lim, motionRms = 0.03))
+    }
+
+    @Test
+    fun tripodGyroNoiseDoesNotShortenLongExposures() {
+        // 16 s on a tripod: the integrated gyro noise looks like ~70 px of blur, but the RMS says the phone is still.
+        assertNull(SeriesMeter.apply(16_000_000_000L, 1600, null, 70.0, Profile.ASTRO, lim, motionRms = 0.002))
+        assertNull(SeriesMeter.apply(16_000_000_000L, 1600, null, 70.0, Profile.ASTRO, lim, motionRms = null))
     }
 
     @Test

@@ -79,9 +79,12 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val id: String,
         val timeMs: Long,
         val file: File,
+        /** Metadata and exposure window only; the JPEG is in [file]. */
         val frame: CapturedFrame,
         val settings: ShotSettings,
         val motion: MetaBuilder.ExposureMotion,
+        val width: Int,
+        val height: Int,
     )
 
     /** [stop] is polled between frames of a series: when true the frames taken so far are merged. */
@@ -136,7 +139,10 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
             val file = File(dir, "frame_%02d.jpg".format(i))
             file.writeBytes(f.jpeg)
             val m = MetaBuilder.exposureMotion(g.sensors, f.exposureStartRt, f.exposureEndRt, env.caps.focalLengthPx)
-            records += FrameRecord(i, Ids.newSampleId(frameTime), frameTime, file, f, settings, m)
+            val (fw, fh) = ImageIo.jpegSize(f.jpeg)
+            // Only metadata stays in memory: a long astro series has 100+ frames, too many JPEGs for the heap.
+            val slim = CapturedFrame(ByteArray(0), f.meta, f.exposureStartRt, f.exposureEndRt)
+            records += FrameRecord(i, Ids.newSampleId(frameTime), frameTime, file, slim, settings, m, fw, fh)
             if (i == metered && metered < meterBudget) {
                 val next = meterNext(settings, plan.profile, file, m, env)
                 if (next == null) metered = meterBudget else {
@@ -181,9 +187,8 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
 
         val ds = env.app.datasetMode
         for (r in records) {
-            val (w, h) = ImageIo.jpegSize(r.frame.jpeg)
             g.captures.insert(
-                entity(r.id, r.timeMs, Roles.FRAME, seriesId, r.index, captured, plan, Uri.fromFile(r.file), w, h, orientation, r.frame, location, ds),
+                entity(r.id, r.timeMs, Roles.FRAME, seriesId, r.index, captured, plan, Uri.fromFile(r.file), r.width, r.height, orientation, r.frame, location, ds),
             )
         }
         val last = records.last()
@@ -193,12 +198,11 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
 
         if (ds) g.scope.launch {
             for (r in records) {
-                val (w, h) = ImageIo.jpegSize(r.frame.jpeg)
                 writeSample(
                     id = r.id, timeMs = r.timeMs, plan = plan.copy(settings = r.settings), env = env, frame = r.frame,
                     photoRole = Roles.FRAME, fileName = r.file.name,
                     series = SeriesInfo(seriesId, "frame", r.index, captured, plan.profile.key, plan.settings.stackMode.key),
-                    width = w, height = h, orientation = orientation, location = location, image = { r.file.inputStream() },
+                    width = r.width, height = r.height, orientation = orientation, location = location, image = { r.file.inputStream() },
                 )
             }
             writeSample(
@@ -246,7 +250,7 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
             minIso = ir?.lower ?: iso,
             maxIso = ir?.upper ?: iso,
         )
-        val (e, i) = SeriesMeter.apply(exp, iso, k, motion.blurPx, profile, lim) ?: return null
+        val (e, i) = SeriesMeter.apply(exp, iso, k, motion.blurPx, profile, lim, motion.rms) ?: return null
         return s.copy(exposureNs = e, iso = i)
     }
 

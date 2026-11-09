@@ -1,6 +1,7 @@
 package com.therealcam.capture
 
 import com.therealcam.data.Profile
+import com.therealcam.sensors.SensorHub
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.max
@@ -95,14 +96,19 @@ object SeriesMeter {
 
     /**
      * New (exposure, ISO) from brightness factor [k] and the frame's motion blur, or null if unchanged.
-     * Blur over [MAX_BLUR_PX] shortens the exposure and raises ISO by the same factor.
+     * Blur over [MAX_BLUR_PX] shortens the exposure and raises ISO by the same factor, but only when
+     * [motionRms] shows real shaking: on a tripod, integrated gyro noise alone reaches tens of pixels
+     * in a long exposure.
      * Darker: lower ISO first (less noise), except the moon, where shorter frames freeze the air.
      * Brighter: longer exposure up to [Limits.brightenMaxExpNs], then ISO.
      */
-    fun apply(expNs: Long, iso: Int, k: Double?, blurPx: Double?, profile: Profile, lim: Limits): Pair<Long, Int>? {
+    fun apply(
+        expNs: Long, iso: Int, k: Double?, blurPx: Double?, profile: Profile, lim: Limits, motionRms: Double? = null,
+    ): Pair<Long, Int>? {
         var exp = expNs.toDouble()
         var gain = iso.toDouble()
-        if (blurPx != null && blurPx.isFinite() && blurPx > MAX_BLUR_PX && profile != Profile.TRAILS) {
+        val shaken = motionRms != null && motionRms.isFinite() && motionRms >= SensorHub.STEADY_RAD_S
+        if (shaken && blurPx != null && blurPx.isFinite() && blurPx > MAX_BLUR_PX && profile != Profile.TRAILS) {
             val b = (MAX_BLUR_PX / blurPx).coerceAtLeast(0.25)
             exp *= b
             gain /= b

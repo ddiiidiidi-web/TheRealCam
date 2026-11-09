@@ -64,7 +64,7 @@ x вправо, y вверх, z из экрана, в естественной �
     "exposure_range_ns": [10000, 500000000], "min_focus_distance_diopters": 10.0
   },
 
-  "mode": "manual",                       // auto | manual | ai
+  "mode": "manual",                       // auto | manual | astro | ai
 
   "photo": {
     "role": "single",                     // single | series_frame | series_result
