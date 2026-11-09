@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
@@ -83,6 +84,7 @@ fun CameraScreen(
     vm: CameraViewModel,
     onGallery: (captureId: String?) -> Unit,
     onSettings: () -> Unit,
+    onGuide: () -> Unit = {},
 ) {
     val settings by vm.settings.collectAsState()
     val mode by vm.mode.collectAsState()
@@ -118,6 +120,7 @@ fun CameraScreen(
                 if (caps?.flash == true) {
                     TopIcon(if (torch) Icons.Filled.FlashOn else Icons.Filled.FlashOff, "Фонарик", rot, active = torch) { vm.toggleTorch() }
                 }
+                TopIcon(Icons.AutoMirrored.Filled.HelpOutline, "Руководство", rot) { onGuide() }
                 Spacer(Modifier.weight(1f))
                 if (settings.datasetMode) {
                     Row(

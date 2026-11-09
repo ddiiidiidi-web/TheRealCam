@@ -97,6 +97,7 @@ class CameraActivity : ComponentActivity() {
                         vm,
                         onGallery = { id -> startActivity(GalleryActivity.intent(this, id)) },
                         onSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
+                        onGuide = { startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_GUIDE, true)) },
                     )
                     else -> PermissionScreen()
                 }

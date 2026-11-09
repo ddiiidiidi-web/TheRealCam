@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,6 +61,7 @@ import com.therealcam.BuildConfig
 import com.therealcam.dataset.MIN_DATASET_SAMPLES
 import com.therealcam.ui.common.CategoriesScreen
 import com.therealcam.ui.common.DatasetConsentDialog
+import com.therealcam.ui.common.GuideScreen
 import com.therealcam.ui.common.SceneIcons
 import com.therealcam.ui.theme.RealColors
 import com.therealcam.ui.theme.RealTheme
@@ -73,23 +75,36 @@ class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(AColor.TRANSPARENT), SystemBarStyle.dark(AColor.BLACK))
         super.onCreate(savedInstanceState)
+        // Opened from the camera's "?" button: show the guide, and Back returns to the camera.
+        val guideOnly = intent.getBooleanExtra(EXTRA_GUIDE, false)
         setContent {
             RealTheme {
                 var categories by remember { mutableStateOf(false) }
-                if (categories) {
-                    BackHandler { categories = false }
-                    val list by vm.categories.collectAsState()
-                    CategoriesScreen(list, { categories = false }, { n, i -> vm.createCategory(n, i) }, { vm.updateCategory(it) }, { vm.deleteCategory(it) })
-                } else {
-                    SettingsScreen(vm, onBack = { finish() }, onCategories = { categories = true })
+                var guide by remember { mutableStateOf(guideOnly) }
+                when {
+                    guide -> {
+                        val close = { if (guideOnly) finish() else guide = false }
+                        BackHandler { close() }
+                        GuideScreen(onBack = close)
+                    }
+                    categories -> {
+                        BackHandler { categories = false }
+                        val list by vm.categories.collectAsState()
+                        CategoriesScreen(list, { categories = false }, { n, i -> vm.createCategory(n, i) }, { vm.updateCategory(it) }, { vm.deleteCategory(it) })
+                    }
+                    else -> SettingsScreen(vm, onBack = { finish() }, onCategories = { categories = true }, onGuide = { guide = true })
                 }
             }
         }
     }
+
+    companion object {
+        const val EXTRA_GUIDE = "guide"
+    }
 }
 
 @Composable
-private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategories: () -> Unit) {
+private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategories: () -> Unit, onGuide: () -> Unit) {
     val s by vm.settings.collectAsState()
     val models by vm.models.collectAsState()
     val modelError by vm.modelError.collectAsState()
@@ -119,6 +134,18 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
             Text(it, color = Color.Black, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().background(RealColors.Accent).padding(12.dp))
         }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clip(RoundedCornerShape(14.dp))
+                    .background(RealColors.Surface).clickable(onClick = onGuide).padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.AutoMirrored.Filled.MenuBook, null, tint = RealColors.Accent)
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Руководство", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Что делает каждая кнопка и режим — по пунктам", color = RealColors.TextDim, fontSize = 12.sp)
+                }
+            }
             Section("Датасет")
             SwitchRow("Сбор датасета", "Запоминать параметры, датчики и оценки снимков для обучения своей модели", s.datasetMode) { on ->
                 if (on) consent = true else vm.setDatasetMode(false)
