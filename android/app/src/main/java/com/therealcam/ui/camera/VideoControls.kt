@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -48,7 +50,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.therealcam.camera.VideoOptions
 import com.therealcam.camera.VideoQuality
+import com.therealcam.camera.VideoSpec
 import com.therealcam.ui.theme.RealColors
 
 /** Preview box: 3:4 for photos; in VIDEO 9:16, shrunk to the space the controls leave free. */
@@ -78,25 +82,48 @@ fun VideoControls(video: VideoSession, rot: Float) {
             ask.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
-    val o = options
-    val s = spec
+    VideoOptionsRow(
+        options, spec, recording, mic, rot,
+        onQuality = { video.setQuality(it) }, onFps = { video.setFps(it) }, onStabilization = { video.setStabilization(it) },
+    )
+}
+
+/** Stateless body of [VideoControls]: what the open camera offers, the current choice and the microphone warning. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun VideoOptionsRow(
+    options: VideoOptions?,
+    spec: VideoSpec?,
+    recording: Boolean,
+    mic: Boolean,
+    rot: Float,
+    onQuality: (VideoQuality) -> Unit,
+    onFps: (Int) -> Unit,
+    onStabilization: (Boolean) -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            VideoQuality.entries.filter { o == null || it in o.qualities }.forEach { q ->
-                VideoChip(q.label, s?.quality == q, enabled = !recording && o != null) { video.setQuality(q) }
+        // Groups wrap onto a second line (narrow screen, large font) instead of squeezing the last button.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(Modifier.align(Alignment.CenterVertically), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                VideoQuality.entries.filter { options == null || it in options.qualities }.forEach { q ->
+                    VideoChip(q.label, spec?.quality == q, enabled = !recording && options != null) { onQuality(q) }
+                }
             }
-            Spacer(Modifier.width(8.dp))
-            listOf(30, 60).forEach { f ->
-                val ok = f == 30 || (o != null && s != null && s.quality in o.fps60)
-                VideoChip("$f к/с", s?.fps == f, enabled = !recording && ok) { video.setFps(f) }
+            Row(Modifier.align(Alignment.CenterVertically), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(30, 60).forEach { f ->
+                    val ok = f == 30 || (options != null && spec != null && spec.quality in options.fps60)
+                    VideoChip("$f к/с", spec?.fps == f, enabled = !recording && ok) { onFps(f) }
+                }
             }
-            Spacer(Modifier.width(8.dp))
-            val canStab = o?.stabilization == true
-            val on = s?.stabilization == true
+            val canStab = options?.stabilization == true
+            val on = spec?.stabilization == true
             Box(
-                Modifier.size(34.dp).clip(CircleShape)
+                Modifier.align(Alignment.CenterVertically).size(34.dp).clip(CircleShape)
                     .background(if (on) RealColors.Accent else RealColors.SurfaceHigh.copy(alpha = 0.9f))
-                    .clickable(enabled = !recording && canStab) { video.setStabilization(!on) },
+                    .clickable(enabled = !recording && canStab) { onStabilization(!on) },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
