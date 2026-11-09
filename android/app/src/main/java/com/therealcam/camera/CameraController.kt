@@ -73,6 +73,12 @@ class CameraController(context: Context) {
     private val _preview = MutableStateFlow<PreviewSnapshot?>(null)
     val preview: StateFlow<PreviewSnapshot?> = _preview.asStateFlow()
 
+    /** Size of the preview buffer and orientation of its sensor, for the view's aspect transform. */
+    data class PreviewBuffer(val width: Int, val height: Int, val sensorOrientation: Int)
+
+    private val _previewBuffer = MutableStateFlow<PreviewBuffer?>(null)
+    val previewBuffer: StateFlow<PreviewBuffer?> = _previewBuffer.asStateFlow()
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
@@ -85,6 +91,7 @@ class CameraController(context: Context) {
         _error.value = null
         val c = CameraCaps.read(manager, cameraId)
         texture.setDefaultBufferSize(c.previewSize.width, c.previewSize.height)
+        _previewBuffer.value = PreviewBuffer(c.previewSize.width, c.previewSize.height, c.sensorOrientation)
         val surface = Surface(texture)
         val r = ImageReader.newInstance(c.jpegSize.width, c.jpegSize.height, ImageFormat.JPEG, 4)
         r.setOnImageAvailableListener({ rd ->
@@ -123,6 +130,7 @@ class CameraController(context: Context) {
         _error.value = null
         val c = CameraCaps.read(manager, cameraId)
         texture.setDefaultBufferSize(out.spec.preview.width, out.spec.preview.height)
+        _previewBuffer.value = PreviewBuffer(out.spec.preview.width, out.spec.preview.height, c.sensorOrientation)
         val surface = Surface(texture)
         try {
             val d = openDevice(cameraId)
@@ -480,6 +488,19 @@ class CameraController(context: Context) {
                 270 -> (1f - v) to uu
                 else -> v to (1f - uu)
             }
+        }
+
+        /**
+         * Scale (x, y) around the view centre that shows a [bufW]×[bufH] camera buffer undistorted and
+         * centre-cropped in a portrait [viewW]×[viewH] TextureView. The view stretches the (already rotated)
+         * buffer to its own size, which squeezes faces whenever the buffer aspect differs from the view.
+         */
+        fun previewScale(bufW: Int, bufH: Int, sensorOrientation: Int, viewW: Int, viewH: Int): Pair<Float, Float> {
+            if (bufW <= 0 || bufH <= 0 || viewW <= 0 || viewH <= 0) return 1f to 1f
+            // Upright content aspect (width / height) once the framework has rotated the buffer.
+            val content = if (sensorOrientation % 180 != 0) bufH.toFloat() / bufW else bufW.toFloat() / bufH
+            val view = viewW.toFloat() / viewH
+            return if (content > view) (content / view) to 1f else 1f to (view / content)
         }
 
         /** JPEG orientation from the device orientation (OrientationEventListener convention). */

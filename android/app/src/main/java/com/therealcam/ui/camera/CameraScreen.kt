@@ -1,8 +1,10 @@
 package com.therealcam.ui.camera
 
 import android.app.Activity
+import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.view.TextureView
+import android.view.View
 import android.view.WindowManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -65,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.therealcam.ai.ScenePreview
+import com.therealcam.camera.CameraController
 import com.therealcam.camera.CameraMode
 import com.therealcam.camera.ExposureScale
 import com.therealcam.capture.ShotRunner
@@ -298,12 +301,26 @@ private fun TopIcon(
 @Composable
 private fun PreviewView(vm: CameraViewModel, modifier: Modifier) {
     val motion by vm.motion.collectAsState()
+    val buffer by vm.camera.previewBuffer.collectAsState()
     var view by remember { mutableStateOf<TextureView?>(null) }
     val orientation = motion.deviceOrientation
     DisposableEffect(view, orientation) {
         val v = view
         vm.sceneGrabber = if (v != null) ({ ScenePreview.grab(v, orientation) }) else null
         onDispose { vm.sceneGrabber = null }
+    }
+    DisposableEffect(view, buffer) {
+        val v = view
+        val b = buffer
+        if (v == null || b == null) return@DisposableEffect onDispose { }
+        fun fit() {
+            val (sx, sy) = CameraController.previewScale(b.width, b.height, b.sensorOrientation, v.width, v.height)
+            v.setTransform(Matrix().apply { setScale(sx, sy, v.width / 2f, v.height / 2f) })
+        }
+        val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
+        v.addOnLayoutChangeListener(listener)
+        fit()
+        onDispose { v.removeOnLayoutChangeListener(listener) }
     }
     AndroidView(
         modifier = modifier,

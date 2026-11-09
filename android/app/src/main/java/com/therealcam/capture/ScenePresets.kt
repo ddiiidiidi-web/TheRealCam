@@ -5,6 +5,7 @@ import com.therealcam.camera.FocusMode
 import com.therealcam.camera.ShotSettings
 import com.therealcam.data.Profile
 import com.therealcam.data.UserPreset
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -56,7 +57,14 @@ object PresetPlanner {
         val steady: Boolean,
     )
 
-    data class Plan(val settings: ShotSettings, val label: String, val hint: String, val needsTripod: Boolean)
+    data class Plan(
+        val settings: ShotSettings,
+        val label: String,
+        val hint: String,
+        val needsTripod: Boolean,
+        /** Phone was steady when planned; the shot keeps this so the shutter tap cannot downgrade it. */
+        val steady: Boolean = false,
+    )
 
     private class Rule(
         val frames: Int,
@@ -67,11 +75,14 @@ object PresetPlanner {
         val infinity: Boolean,
         val hint: String,
         val needsTripod: Boolean = false,
+        /** When the sensor cannot expose [maxFrameS], up to this many frames make up the missing time. */
+        val maxFrames: Int = frames,
     )
 
     private fun rule(p: ScenePreset, steady: Boolean): Rule = when (p) {
+        // Steady: one long low-ISO frame collects the light; a series only when the sensor cannot expose that long.
         ScenePreset.NIGHT -> if (steady) {
-            Rule(6, -0.5, 1.0, 3200, false, "Телефон неподвижен: кадры длиннее, шум уйдёт при сведении", needsTripod = true)
+            Rule(1, -0.5, 30.0, 3200, false, "На опоре: один длинный кадр до 30 с при низком ISO", needsTripod = true, maxFrames = 8)
         } else {
             Rule(8, -0.5, 1.0 / 10, 3200, false, "С рук: 8 коротких кадров, при сведении уходят шум и случайные блики")
         }
@@ -90,15 +101,19 @@ object PresetPlanner {
         ScenePreset.DOCUMENT -> Rule(3, 0.3, 1.0 / 30, 800, false, "3 кадра — остаётся самый резкий")
     }
 
-    fun plan(preset: ScenePreset, i: Input): Plan {
+    fun plan(preset: ScenePreset, i: Input): Plan = planFor(preset, i).copy(steady = i.steady)
+
+    private fun planFor(preset: ScenePreset, i: Input): Plan {
         val r = rule(preset, i.steady)
         val focus = if (r.infinity && i.canFocusInfinity) FocusMode.INFINITY else FocusMode.AUTO
-        val stack = if (r.frames > 1) preset.profile.stackMode else com.therealcam.data.StackMode.NONE
         val inf = if (focus == FocusMode.INFINITY) " · ∞" else ""
-        val auto = ShotSettings(focus = focus, ev = r.biasEv.toFloat(), frames = r.frames, stackMode = stack)
+        // Auto exposure keeps frames short, so a long-exposure scene falls back to its longest series.
+        val autoFrames = r.maxFrames
+        val autoStack = if (autoFrames > 1) preset.profile.stackMode else com.therealcam.data.StackMode.NONE
+        val auto = ShotSettings(focus = focus, ev = r.biasEv.toFloat(), frames = autoFrames, stackMode = autoStack)
         if (!i.manualSensor || i.minIso == null || i.maxIso == null || i.maxExpNs == null) {
             val ev = if (r.biasEv != 0.0) " · EV%+.1f".format(r.biasEv) else ""
-            return Plan(auto, "${r.frames} кадров · авто$ev$inf", r.hint, r.needsTripod)
+            return Plan(auto, "$autoFrames кадров · авто$ev$inf", r.hint, r.needsTripod)
         }
         val minExpS = (i.minExpNs ?: 0L) / 1e9
         val minIso = i.minIso
@@ -108,18 +123,24 @@ object PresetPlanner {
             val n = (i.aperture ?: 1.8f).toDouble()
             n * n / 2.0.pow(MOON_EV100) * 100.0
         } else {
-            val e = i.previewExpNs ?: return Plan(auto, "${r.frames} кадров · авто$inf", r.hint, r.needsTripod)
-            val s = i.previewIso ?: return Plan(auto, "${r.frames} кадров · авто$inf", r.hint, r.needsTripod)
+            val e = i.previewExpNs ?: return Plan(auto, "$autoFrames кадров · авто$inf", r.hint, r.needsTripod)
+            val s = i.previewIso ?: return Plan(auto, "$autoFrames кадров · авто$inf", r.hint, r.needsTripod)
             // AE may not reach its target in the dark; the preview mean tells how far off it is.
             val k = i.previewMeanLin?.takeIf { it > 0.0 }?.let { (TARGET_LIN / it).coerceIn(1.0 / 8, 16.0) } ?: 1.0
             e / 1e9 * s * k * 2.0.pow(r.biasEv)
         }
         val maxS = min(r.maxFrameS, i.maxExpNs / 1e9)
-        val expS = (need / minIso).coerceIn(max(minExpS, 1e-6), max(maxS, minExpS))
+        val wantedS = (need / minIso).coerceAtMost(r.maxFrameS)
+        val expS = wantedS.coerceIn(max(minExpS, 1e-6), max(maxS, minExpS))
         val iso = (need / expS).roundToInt().coerceIn(minIso, isoCap)
         val expNs = (expS * 1e9).roundToLong()
-        val settings = ShotSettings(iso = iso, exposureNs = expNs, focus = focus, frames = r.frames, stackMode = stack)
-        val frames = if (r.frames > 1) "${r.frames} × " else ""
+        // Sensor shorter than the wanted exposure: more frames bring the missing light time back.
+        val n = if (r.maxFrames > r.frames && wantedS > expS * 1.05) {
+            ceil(wantedS / expS).toInt().coerceIn(r.frames, r.maxFrames)
+        } else r.frames
+        val nStack = if (n > 1) preset.profile.stackMode else com.therealcam.data.StackMode.NONE
+        val settings = ShotSettings(iso = iso, exposureNs = expNs, focus = focus, frames = n, stackMode = nStack)
+        val frames = if (n > 1) "$n × " else ""
         return Plan(settings, "$frames${ExposureScale.formatShutter(expNs)} · ISO$iso$inf", r.hint, r.needsTripod)
     }
 
@@ -143,6 +164,6 @@ object PresetPlanner {
             if (s.focus == FocusMode.INFINITY) append(" · ∞")
             if (s.exposureNs == null && s.ev != 0f) append(" · EV%+.1f".format(s.ev))
         }
-        return Plan(s, label, "Ваш пресет «${u.name}». Удалить — долгое нажатие на значок", tripod)
+        return Plan(s, label, "Ваш пресет «${u.name}». Удалить — долгое нажатие на значок", tripod, i.steady)
     }
 }

@@ -30,13 +30,33 @@ class PresetPlannerTest {
     }
 
     @Test
-    fun nightOnATripodUsesLongerFramesAndLowerIso() {
+    fun nightOnATripodIsOneLongFrameAtLowIso() {
         val p = PresetPlanner.plan(ScenePreset.NIGHT, input(steady = true))
-        assertEquals(1_000_000_000L, p.settings.exposureNs)
-        // need = 0.1 s · 3200 · 9 · 2^-0.5 ≈ 2036 s·ISO → ISO ≈ 2036 at 1 s
-        assertEquals(2036.0, p.settings.iso!!.toDouble(), 2.0)
-        assertEquals(6, p.settings.frames)
+        // need = 0.1 s · 3200 · 9 · 2^-0.5 ≈ 2036 s·ISO → 40 s at ISO 50, capped at 30 s → ISO ≈ 68
+        assertEquals(30_000_000_000L, p.settings.exposureNs)
+        assertEquals(68.0, p.settings.iso!!.toDouble(), 1.0)
+        assertEquals(1, p.settings.frames)
+        assertEquals(StackMode.NONE, p.settings.stackMode)
         assertTrue(p.needsTripod)
+        assertTrue(p.steady)
+    }
+
+    @Test
+    fun nightOnATripodStacksWhenTheSensorCannotExposeLongEnough() {
+        val p = PresetPlanner.plan(ScenePreset.NIGHT, input(steady = true).copy(maxExpNs = 4_000_000_000L))
+        assertEquals(4_000_000_000L, p.settings.exposureNs)
+        // 30 s wanted, 4 s per frame → 8 frames (the cap), each brightened with ISO ≈ 2036 / 4
+        assertEquals(8, p.settings.frames)
+        assertEquals(509.0, p.settings.iso!!.toDouble(), 2.0)
+        assertEquals(StackMode.SIGMA_CLIP, p.settings.stackMode)
+    }
+
+    @Test
+    fun brightNightOnATripodStaysOneFrameAtBaseIso() {
+        // City lights: 1/30 s · ISO 400 already near target → ≈ 9.4 s·ISO → 0.19 s at ISO 50.
+        val p = PresetPlanner.plan(ScenePreset.NIGHT, input(expNs = 33_333_333L, iso = 400, meanLin = 0.18, steady = true))
+        assertEquals(1, p.settings.frames)
+        assertEquals(50, p.settings.iso)
     }
 
     @Test

@@ -407,7 +407,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun selectedUserPreset(): UserPreset? = _userPreset.value?.let { id -> settings.value.userPresets.firstOrNull { it.id == id } }
 
-    private fun presetPlan(caps: CameraCaps): PresetPlanner.Plan {
+    private fun presetPlan(caps: CameraCaps, steady: Boolean = motion.value.steady): PresetPlanner.Plan {
         val p = camera.preview.value
         val input = PresetPlanner.Input(
             manualSensor = caps.manualSensor,
@@ -420,7 +420,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             previewExpNs = p?.exposureNs,
             previewIso = p?.iso,
             previewMeanLin = lastMeanLin,
-            steady = motion.value.steady,
+            steady = steady,
         )
         return selectedUserPreset()?.let { PresetPlanner.planUser(it, input) } ?: PresetPlanner.plan(_preset.value, input)
     }
@@ -646,8 +646,11 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _ratingFor.value = null
         shotJob = viewModelScope.launch {
             val app = settings.value
+            // The plan on screen decides tripod or handheld: the tap and the countdown wobble must not turn a
+            // steady scene into the handheld series.
+            val steady = _presetPlan.value?.steady == true || motion.value.steady
             // Astro and tripod scenes: a short delay so pressing the shutter does not shake the first frame.
-            val tripodScene = _mode.value == CameraMode.PRESET && _presetPlan.value?.needsTripod == true && motion.value.steady
+            val tripodScene = _mode.value == CameraMode.PRESET && _presetPlan.value?.needsTripod == true && steady
             val timer = when {
                 _mode.value == CameraMode.ASTRO -> maxOf(app.timerSeconds, 3)
                 tripodScene -> maxOf(app.timerSeconds, 2)
@@ -662,7 +665,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             val ctx = featureContext()
             val features = scene?.let { s -> withContext(Dispatchers.Default) { SceneFeatures.compute(s.px, s.w, s.h, ctx) } }
                 ?: SceneFeatures.NAMES.associateWith { null }
-            val plan = buildPlan(app).copy(timerS = timer)
+            val plan = buildPlan(app, steady).copy(timerS = timer)
             val expectedMs = plan.settings.frames.coerceAtLeast(1) * ShotRunner.plannedFrameMs(plan.settings)
             val speak = app.voice && expectedMs >= SPEAK_MIN_MS
             if (speak) speaker().say(SpeechText.start((expectedMs / 1000).toInt(), plan.mode == CameraMode.ASTRO))
@@ -742,7 +745,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun buildPlan(app: AppSettings): ShotRunner.Plan = basePlan(app).copy(lens = lensUse())
+    private fun buildPlan(app: AppSettings, steady: Boolean): ShotRunner.Plan = basePlan(app, steady).copy(lens = lensUse())
 
     private fun lensUse(): LensUse? {
         val l = _lens.value ?: return null
@@ -752,7 +755,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         return LensUse(l.kind, z, mainEq?.times(z))
     }
 
-    private fun basePlan(app: AppSettings): ShotRunner.Plan {
+    private fun basePlan(app: AppSettings, steady: Boolean): ShotRunner.Plan {
         val hint = _categoryHint.value?.takeIf { id -> categories.value.any { it.id == id } }
         return when (_mode.value) {
             CameraMode.AUTO -> ShotRunner.Plan(
@@ -772,7 +775,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val p = _preset.value
                 val user = selectedUserPreset()
                 val profile = user?.let { Profile.of(it.profile) } ?: p.profile
-                val settings = (camera.caps.value?.let { presetPlan(it).settings } ?: _presetPlan.value?.settings ?: ShotSettings())
+                val settings = (camera.caps.value?.let { presetPlan(it, steady).settings } ?: _presetPlan.value?.settings ?: ShotSettings())
                     .copy(torch = _torch.value)
                 val cat = hint ?: categories.value.firstOrNull { SceneKeys.profileOf(it.icon) == profile }?.id
                 ShotRunner.Plan(CameraMode.PRESET, settings, profile, cat, null, app.timerSeconds, preset = if (user != null) "user" else p.key)
