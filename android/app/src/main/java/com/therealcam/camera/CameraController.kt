@@ -259,6 +259,7 @@ class CameraController(context: Context) {
                 afState = result.get(CaptureResult.CONTROL_AF_STATE),
                 timestampNs = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: 0L,
                 zoomRatio = if (Build.VERSION.SDK_INT >= 30) result.get(CaptureResult.CONTROL_ZOOM_RATIO) else null,
+                focalLengthMm = result.get(CaptureResult.LENS_FOCAL_LENGTH),
             )
         }
     }

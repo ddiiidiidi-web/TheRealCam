@@ -33,6 +33,10 @@ data class AppSettings(
     val lastCategoryHint: String? = null,
     /** The first-run screen (own dataset or a shared model) was completed or skipped. */
     val onboarded: Boolean = false,
+    /** Astro mode: total shooting time of one picture. */
+    val astroDurationS: Int = 240,
+    /** Voice countdown of long series every 30 s. */
+    val voice: Boolean = true,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -52,6 +56,8 @@ class SettingsRepository(private val context: Context) {
         val lastMode = stringPreferencesKey("last_mode")
         val lastCategoryHint = stringPreferencesKey("last_category_hint")
         val onboarded = booleanPreferencesKey("onboarded")
+        val astroDurationS = intPreferencesKey("astro_duration_s")
+        val voice = booleanPreferencesKey("voice")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }
@@ -76,6 +82,8 @@ class SettingsRepository(private val context: Context) {
             lastMode = this[K.lastMode] ?: d.lastMode,
             lastCategoryHint = this[K.lastCategoryHint],
             onboarded = this[K.onboarded] ?: d.onboarded,
+            astroDurationS = this[K.astroDurationS] ?: d.astroDurationS,
+            voice = this[K.voice] ?: d.voice,
         )
     }
 
@@ -95,6 +103,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setTimerSeconds(v: Int) = context.dataStore.edit { it[K.timerSeconds] = v }
     suspend fun setLastMode(v: String) = context.dataStore.edit { it[K.lastMode] = v }
     suspend fun setOnboarded(v: Boolean) = context.dataStore.edit { it[K.onboarded] = v }
+    suspend fun setAstroDurationS(v: Int) = context.dataStore.edit { it[K.astroDurationS] = v.coerceIn(10, 3600) }
+    suspend fun setVoice(v: Boolean) = context.dataStore.edit { it[K.voice] = v }
 
     suspend fun setActiveModel(fileName: String?) = context.dataStore.edit {
         if (fileName == null) it.remove(K.activeModel) else it[K.activeModel] = fileName

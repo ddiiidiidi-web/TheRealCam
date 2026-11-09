@@ -10,6 +10,7 @@ import kotlin.math.roundToLong
 enum class CameraMode(val key: String, val label: String) {
     AUTO("auto", "АВТО"),
     MANUAL("manual", "РУЧНОЙ"),
+    ASTRO("astro", "АСТРО"),
     AI("ai", "AI");
 
     companion object {
@@ -57,6 +58,8 @@ data class PreviewSnapshot(
     val afState: Int?,
     val timestampNs: Long,
     val zoomRatio: Float?,
+    /** Focal length in use (changes with the lens of a logical camera). */
+    val focalLengthMm: Float? = null,
 ) {
     val aeStateName get() = aeStateName(aeState)
     val afStateName get() = afStateName(afState)

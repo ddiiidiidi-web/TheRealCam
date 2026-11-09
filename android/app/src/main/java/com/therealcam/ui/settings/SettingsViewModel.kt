@@ -62,6 +62,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setGrid(on: Boolean) = viewModelScope.launch { g.settings.setGrid(on) }
     fun setLevel(on: Boolean) = viewModelScope.launch { g.settings.setLevel(on) }
     fun setVolumeShutter(on: Boolean) = viewModelScope.launch { g.settings.setVolumeShutter(on) }
+    fun setVoice(on: Boolean) = viewModelScope.launch { g.settings.setVoice(on) }
     fun setJpegQuality(q: Int) = viewModelScope.launch { g.settings.setJpegQuality(q) }
     fun setDatasetImageMaxSide(px: Int) = viewModelScope.launch { g.settings.setDatasetImageMaxSide(px) }
 

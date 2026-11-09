@@ -149,6 +149,7 @@ fun CameraScreen(
 
                 val needTripod = when (mode) {
                     CameraMode.AI -> ai?.plan?.needsTripod == true
+                    CameraMode.ASTRO -> true
                     CameraMode.MANUAL -> vm.shot.collectAsState().value.let { s ->
                         (s.exposureNs ?: 0L) >= 66_000_000L || (s.frames > 1 && (s.exposureNs ?: 0L) * s.frames >= 1_000_000_000L)
                     }
@@ -169,7 +170,7 @@ fun CameraScreen(
                     Text("$it", fontSize = 96.sp, fontWeight = FontWeight.Light, color = Color.White,
                         modifier = Modifier.align(Alignment.Center).rotate(rot))
                 }
-                busy?.let { BusyOverlay(it, Modifier.align(Alignment.BottomCenter)) }
+                busy?.let { BusyOverlay(it, vm.remainingS.collectAsState().value, Modifier.align(Alignment.BottomCenter)) }
                 message?.let { m ->
                     LaunchedEffect(m) {
                         delay(3500)
@@ -197,6 +198,10 @@ fun CameraScreen(
                         )
                         HintRow(vm.categories.collectAsState().value, vm.categoryHint.collectAsState().value, rot, vm::setCategoryHint)
                     }
+                    CameraMode.ASTRO -> AstroControls(
+                        vm.astro.collectAsState().value, settings.astroDurationS, settings.voice, motion.steady,
+                        vm::setAstroDuration, { vm.setVoice(it) },
+                    )
                     CameraMode.AI -> AiControls(model, vm.modelError.collectAsState().value, ai, datasetCount, rot, vm::pickAiClass)
                 }
                 ModeSwitcher(mode, enabled = busy == null, onMode = vm::setMode)
@@ -342,7 +347,7 @@ private fun FocusTapLayer(enabled: Boolean, onTap: (Float, Float) -> Unit, onPin
 }
 
 @Composable
-private fun BusyOverlay(p: ShotRunner.Progress, modifier: Modifier) {
+private fun BusyOverlay(p: ShotRunner.Progress, remainingS: Int?, modifier: Modifier) {
     Column(
         modifier.padding(12.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RealColors.Scrim).padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -350,7 +355,8 @@ private fun BusyOverlay(p: ShotRunner.Progress, modifier: Modifier) {
         val (text, progress) = when (p) {
             is ShotRunner.Progress.Capturing -> {
                 val exp = p.exposureNs?.let { " · " + ExposureScale.formatShutter(it) } ?: ""
-                (if (p.total > 1) "Кадр ${p.frame} / ${p.total}$exp" else "Съёмка$exp") to
+                val left = remainingS?.let { " · осталось %d:%02d".format(it / 60, it % 60) } ?: ""
+                (if (p.total > 1) "Кадр ${p.frame} / ${p.total}$exp$left" else "Съёмка$exp$left") to
                     (if (p.total > 1) (p.frame - 1f) / p.total else null)
             }
             is ShotRunner.Progress.Merging -> "Сведение кадров ${(p.fraction * 100).roundToInt()}%" to p.fraction

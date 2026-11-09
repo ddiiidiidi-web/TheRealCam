@@ -19,6 +19,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -37,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.therealcam.ai.AstroPlanner
 import com.therealcam.ai.engine.TrcmModel
 import com.therealcam.camera.CameraCaps
 import com.therealcam.camera.CameraMode
@@ -306,5 +311,52 @@ fun AiControls(
             Spacer(Modifier.height(2.dp))
             Text("${p.cls.name} · ${p.label}", color = Color.White, fontSize = 12.sp, maxLines = 1)
         }
+    }
+}
+
+/**
+ * Astro mode: total time of one picture, the plan (frames × exposure · ISO · ∞ · ≈ time),
+ * voice countdown on/off and a tripod hint. Exposure and ISO are chosen automatically.
+ */
+@Composable
+fun AstroControls(
+    plan: AstroPlanner.Plan?,
+    durationS: Int,
+    voice: Boolean,
+    steady: Boolean,
+    onDuration: (Int) -> Unit,
+    onVoice: (Boolean) -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val selected = AstroPlanner.DURATIONS_S.minBy { kotlin.math.abs(it - durationS) }
+        ValueRow(AstroPlanner.DURATIONS_S, selected, { "${it / 60} мин" }, onDuration)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.AutoAwesome, null, tint = RealColors.Accent, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(plan?.label ?: "Смотрю на небо…", color = Color.White, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+            Box(
+                Modifier.size(34.dp).clip(CircleShape).background(if (voice) RealColors.SurfaceHigh else Color.Transparent)
+                    .clickable { onVoice(!voice) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (voice) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                    if (voice) "Голос: сколько осталось — включён" else "Голос выключен",
+                    tint = if (voice) RealColors.Accent else RealColors.TextDim, modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        val hint = when {
+            plan?.sensorLimited == true && plan.frameS != null ->
+                "Сенсор держит не дольше ${ExposureScale.formatShutter((plan.frameS * 1e9).toLong())}: кадров больше, каждый короче"
+            plan?.sensorLimited == true -> "Нет ручной выдержки: много коротких кадров с автоэкспозицией"
+            !steady -> "Поставьте телефон на штатив или опору"
+            else -> "Телефон неподвижен. Фары и самолёты уберутся при сведении"
+        }
+        Text(hint, color = if (!steady) RealColors.Warn else RealColors.TextDim, fontSize = 11.sp, maxLines = 2)
     }
 }

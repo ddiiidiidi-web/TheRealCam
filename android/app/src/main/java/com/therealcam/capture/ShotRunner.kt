@@ -68,7 +68,8 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
     )
 
     sealed interface Progress {
-        data class Capturing(val frame: Int, val total: Int, val exposureNs: Long?) : Progress
+        /** [endEstimateRt] is the expected end of capturing in elapsedRealtime milliseconds. */
+        data class Capturing(val frame: Int, val total: Int, val exposureNs: Long?, val endEstimateRt: Long? = null) : Progress
         data class Merging(val fraction: Float) : Progress
         data object Saving : Progress
     }
@@ -94,7 +95,7 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val frames = plan.settings.frames.coerceAtLeast(1)
 
         if (frames == 1) {
-            onProgress(Progress.Capturing(1, 1, plan.settings.exposureNs))
+            onProgress(Progress.Capturing(1, 1, plan.settings.exposureNs, SystemClock.elapsedRealtime() + plannedFrameMs(plan.settings)))
             val f = camera.capture(request)
             onProgress(Progress.Saving)
             val uri = g.photos.save(f.jpeg, "$baseName.jpg", env.app.saveToGallery)
@@ -119,13 +120,17 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
         val dir = g.paths.seriesDir(seriesId).apply { mkdirs() }
         val records = ArrayList<FrameRecord>(frames)
         var settings = plan.settings
-        // AI series only: leading frames meter the scene and the AI corrects exposure/ISO for the rest.
-        // Manual settings are the user's choice and are never changed.
-        val meterBudget = if (plan.mode == CameraMode.AI && plan.settings.manualExposure) SeriesMeter.meteringBudget(frames) else 0
+        // Automatic series only (AI and astro): leading frames meter the scene and exposure/ISO of the
+        // rest are corrected. Manual settings are the user's choice and are never changed.
+        val auto = plan.mode == CameraMode.AI || plan.mode == CameraMode.ASTRO
+        val meterBudget = if (auto && plan.settings.manualExposure) SeriesMeter.meteringBudget(frames) else 0
         var metered = 0
+        val seriesStart = SystemClock.elapsedRealtime()
         for (i in 0 until frames) {
             if (i > 0 && stop()) break
-            onProgress(Progress.Capturing(i + 1, frames, settings.exposureNs))
+            val now = SystemClock.elapsedRealtime()
+            val perFrameMs = if (i == 0) plannedFrameMs(settings) else (now - seriesStart) / i
+            onProgress(Progress.Capturing(i + 1, frames, settings.exposureNs, now + (frames - i) * perFrameMs))
             val frameTime = System.currentTimeMillis()
             val f = camera.capture(request.copy(settings = settings))
             val file = File(dir, "frame_%02d.jpg".format(i))
@@ -205,6 +210,14 @@ class ShotRunner(private val g: AppGraph, private val camera: CameraController) 
             )
         }
         return result
+    }
+
+    /** Expected wall time of one frame: exposure plus readout and JPEG encoding. */
+    companion object {
+        fun plannedFrameMs(s: ShotSettings): Long {
+            val expMs = (s.exposureNs ?: 50_000_000L) / 1_000_000L
+            return expMs + max(150L, expMs * 3 / 100)
+        }
     }
 
     /** Settings for the frames after a metering frame, or null to keep them (see [SeriesMeter]). */

@@ -188,6 +188,11 @@ private fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit, onCategori
             SwitchRow("Сетка", null, s.grid, vm::setGrid)
             SwitchRow("Уровень горизонта", null, s.level, vm::setLevel)
             SwitchRow("Спуск кнопками громкости", null, s.volumeShutter, vm::setVolumeShutter)
+            SwitchRow(
+                "Голос во время длинной съёмки",
+                "Каждые 30 с говорит, сколько осталось (астро и серии от 30 с). Нужен русский голос в системном синтезаторе речи",
+                s.voice, vm::setVoice,
+            )
             ChoiceRow("Качество JPEG", listOf(90 to "90", 95 to "95", 100 to "100"), s.jpegQuality, vm::setJpegQuality)
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("Объективы этого телефона", color = Color.White)

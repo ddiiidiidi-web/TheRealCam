@@ -4,8 +4,10 @@ import android.app.Application
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraManager
 import android.media.MediaActionSound
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.therealcam.ai.AstroPlanner
 import com.therealcam.ai.CapturePlan
 import com.therealcam.ai.CapturePlanner
 import com.therealcam.ai.SceneFeatures
@@ -13,6 +15,7 @@ import com.therealcam.ai.ScenePreview
 import com.therealcam.ai.engine.ModelOutput
 import com.therealcam.ai.engine.TrcmModel
 import com.therealcam.appGraph
+import com.therealcam.camera.CameraCaps
 import com.therealcam.camera.CameraController
 import com.therealcam.camera.CameraMode
 import com.therealcam.camera.ExposureScale
@@ -24,6 +27,8 @@ import com.therealcam.camera.LensUse
 import com.therealcam.camera.ShotSettings
 import com.therealcam.camera.ZoomMath
 import com.therealcam.capture.ShotRunner
+import com.therealcam.capture.SpeechText
+import com.therealcam.capture.VoiceAnnouncer
 import com.therealcam.data.AppSettings
 import com.therealcam.data.Profile
 import com.therealcam.data.SceneKeys
@@ -107,6 +112,16 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private val _zoom = MutableStateFlow(1f)
     val zoom = _zoom.asStateFlow()
     private var pinchZoom: Float? = null
+
+    /** Astro mode plan (frames × exposure · ISO), refreshed from the preview meter. */
+    private val _astro = MutableStateFlow<AstroPlanner.Plan?>(null)
+    val astro = _astro.asStateFlow()
+    /** Seconds left until a long series finishes capturing. */
+    private val _remainingS = MutableStateFlow<Int?>(null)
+    val remainingS = _remainingS.asStateFlow()
+    private var lastMeanLin: Double? = null
+    @Volatile private var etaRt: Long? = null
+    private var voice: VoiceAnnouncer? = null
 
     /** Provided by the UI while the preview view exists (main thread only). */
     var sceneGrabber: (() -> ScenePreview?)? = null
@@ -244,6 +259,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         camera.release()
         shutterSound.release()
+        voice?.shutdown()
     }
 
     // ------------------------------------------------------------ controls
@@ -254,7 +270,39 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _ai.value = null
         smoothed = null
         viewModelScope.launch { g.settings.setLastMode(m.key) }
+        if (m == CameraMode.ASTRO) camera.caps.value?.let { _astro.value = astroPlan(it) }
         applyPreviewSettings()
+    }
+
+    fun setAstroDuration(s: Int) {
+        camera.caps.value?.let { _astro.value = astroPlan(it, s) }
+        viewModelScope.launch { g.settings.setAstroDurationS(s) }
+    }
+
+    fun setVoice(on: Boolean) = viewModelScope.launch { g.settings.setVoice(on) }
+
+    private fun astroPlan(caps: CameraCaps, durationS: Int = settings.value.astroDurationS): AstroPlanner.Plan {
+        val p = camera.preview.value
+        val l = _lens.value
+        return AstroPlanner.plan(
+            AstroPlanner.Input(
+                durationS = durationS,
+                manualSensor = caps.manualSensor,
+                focalMm = p?.focalLengthMm ?: caps.focalLengths.firstOrNull(),
+                aperture = p?.aperture ?: caps.apertures.firstOrNull(),
+                pixelPitchUm = caps.physicalSize?.let { it.width * 1000f / caps.jpegSize.width },
+                equivMm = l?.equivMm,
+                digitalZoom = l?.let { _zoom.value / it.zoom } ?: 1f,
+                minExpNs = caps.exposureRange?.lower,
+                maxExpNs = caps.exposureRange?.upper,
+                minIso = caps.isoRange?.lower,
+                maxIso = caps.isoRange?.upper,
+                canFocusInfinity = caps.canManualFocus,
+                previewExpNs = p?.exposureNs,
+                previewIso = p?.iso,
+                previewMeanLin = lastMeanLin,
+            ),
+        )
     }
 
     fun switchCamera() {
@@ -363,6 +411,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     private fun previewSettings(): ShotSettings = when (_mode.value) {
         CameraMode.AUTO -> ShotSettings(ev = _autoEv.value, torch = _torch.value)
         CameraMode.MANUAL -> _shot.value.copy(torch = _torch.value)
+        CameraMode.ASTRO -> ShotSettings(focus = FocusMode.INFINITY, torch = _torch.value)
         CameraMode.AI -> ShotSettings(torch = _torch.value)
     }
 
@@ -397,13 +446,17 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                 val m = model.value
                 val result = withContext(Dispatchers.Default) {
                     val stats = SceneFeatures.imageStats(scene.px, scene.w, scene.h)
-                    val meter = ln(maxOf(stats.meanLin, 1e-5) / 0.18) / ln(2.0)
                     val out = if (_mode.value == CameraMode.AI && m != null) {
                         runCatching { m.run(scene.thumb, SceneFeatures.compute(scene.px, scene.w, scene.h, ctx)) }.getOrNull()
                     } else null
-                    meter to out
+                    stats.meanLin to out
                 }
-                _meterEv.value = result.first
+                lastMeanLin = result.first
+                _meterEv.value = ln(maxOf(result.first, 1e-5) / 0.18) / ln(2.0)
+                if (_mode.value == CameraMode.ASTRO) {
+                    _astro.value = astroPlan(caps)
+                    continue
+                }
                 val out = result.second
                 if (out == null || m == null || _mode.value != CameraMode.AI) continue
                 lastOutput = out
@@ -427,7 +480,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _ratingFor.value = null
         shotJob = viewModelScope.launch {
             val app = settings.value
-            for (s in app.timerSeconds downTo 1) {
+            // Astro: a short delay so pressing the shutter does not shake the first frame.
+            val timer = if (_mode.value == CameraMode.ASTRO) maxOf(app.timerSeconds, 3) else app.timerSeconds
+            for (s in timer downTo 1) {
                 _countdown.value = s
                 delay(1000)
             }
@@ -436,20 +491,65 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             val ctx = featureContext()
             val features = scene?.let { s -> withContext(Dispatchers.Default) { SceneFeatures.compute(s.px, s.w, s.h, ctx) } }
                 ?: SceneFeatures.NAMES.associateWith { null }
-            val plan = buildPlan(app)
+            val plan = buildPlan(app).copy(timerS = timer)
+            val expectedMs = plan.settings.frames.coerceAtLeast(1) * ShotRunner.plannedFrameMs(plan.settings)
+            val speak = app.voice && expectedMs >= SPEAK_MIN_MS
+            if (speak) speaker().say(SpeechText.start((expectedMs / 1000).toInt(), plan.mode == CameraMode.ASTRO))
+            etaRt = null
             _busy.value = ShotRunner.Progress.Capturing(0, plan.settings.frames, plan.settings.exposureNs)
+            val ticker = if (expectedMs >= COUNTDOWN_MIN_MS) launch { countdown(expectedMs, speak) } else null
             try {
                 val env = ShotRunner.Env(caps, camera.preview.value, scene, features, motion.value, location.value, app)
                 stopRequested = false
                 shutterSound.play(MediaActionSound.SHUTTER_CLICK)
-                val e = withContext(Dispatchers.Default) { runner.run(plan, env, stop = { stopRequested }) { _busy.value = it } }
+                val e = withContext(Dispatchers.Default) {
+                    runner.run(plan, env, stop = { stopRequested }) { p ->
+                        if (p is ShotRunner.Progress.Capturing) etaRt = p.endEstimateRt
+                        _busy.value = p
+                    }
+                }
+                if (speak) speaker().say("Готово")
                 if (app.datasetMode && app.askRating) _ratingFor.value = e.id
             } catch (t: Throwable) {
-                if (t !is kotlinx.coroutines.CancellationException) _message.value = "Не удалось снять: ${t.message}"
+                if (t !is kotlinx.coroutines.CancellationException) {
+                    _message.value = "Не удалось снять: ${t.message}"
+                    if (speak) speaker().say("Не удалось снять")
+                }
             } finally {
+                ticker?.cancel()
+                _remainingS.value = null
+                etaRt = null
                 _busy.value = null
                 applyPreviewSettings()
             }
+        }
+    }
+
+    private fun speaker(): VoiceAnnouncer = voice ?: VoiceAnnouncer(getApplication()).also { voice = it }
+
+    /** Time left on screen and, if [speak], aloud on every 30-second mark ("Осталось 3 минуты"). */
+    private suspend fun countdown(expectedMs: Long, speak: Boolean) {
+        var step = SpeechText.tick(expectedMs, Int.MAX_VALUE).first
+        var mergingSaid = false
+        while (true) {
+            val b = _busy.value
+            val eta = etaRt
+            if (b is ShotRunner.Progress.Capturing && eta != null) {
+                val rem = eta - SystemClock.elapsedRealtime()
+                _remainingS.value = (rem / 1000).toInt().coerceAtLeast(0)
+                if (speak) {
+                    val (s, say) = SpeechText.tick(rem, step)
+                    step = s
+                    say?.let { speaker().say(SpeechText.remaining(it)) }
+                }
+            } else if (b is ShotRunner.Progress.Merging) {
+                _remainingS.value = null
+                if (speak && !mergingSaid) {
+                    mergingSaid = true
+                    speaker().say("Съёмка закончена, свожу кадры")
+                }
+            }
+            delay(500)
         }
     }
 
@@ -490,6 +590,13 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             CameraMode.MANUAL -> ShotRunner.Plan(
                 CameraMode.MANUAL, _shot.value.copy(torch = _torch.value), hintProfile(), hint, null, app.timerSeconds,
             )
+            CameraMode.ASTRO -> {
+                val settings = camera.caps.value?.let { astroPlan(it).settings } ?: _astro.value?.settings
+                    ?: ShotSettings(focus = FocusMode.INFINITY, frames = 15, stackMode = StackMode.SIGMA_CLIP)
+                // Astro shots go to the user's astro category if there is one; it can be changed when rating.
+                val cat = hint ?: categories.value.firstOrNull { SceneKeys.profileOf(it.icon) == Profile.ASTRO }?.id
+                ShotRunner.Plan(CameraMode.ASTRO, settings, Profile.ASTRO, cat, null, app.timerSeconds)
+            }
             CameraMode.AI -> {
                 val m = model.value
                 val st = _ai.value
@@ -511,4 +618,10 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setTimer(seconds: Int) = viewModelScope.launch { g.settings.setTimerSeconds(seconds) }
     fun setGrid(on: Boolean) = viewModelScope.launch { g.settings.setGrid(on) }
+
+    private companion object {
+        /** Series at least this long show the time left; from [SPEAK_MIN_MS] it is also spoken. */
+        const val COUNTDOWN_MIN_MS = 10_000L
+        const val SPEAK_MIN_MS = 30_000L
+    }
 }
